@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 12 默认拒绝执行依赖的构建脚本；esbuild（tsx/vite 依赖）需要它来放置二进制
+allowBuilds:
+  esbuild: true
+  # Shell 模式的伪终端，原生模块（有预编译包时不编译）
+  node-pty: true

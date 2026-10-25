@@ -1,0 +1,439 @@
+/**
+ * Claude Code 实时运行：`claude -p --input-format stream-json --output-format stream-json`。
+ *
+ * 一个会话一个常驻进程：stdin 逐行写用户消息，stdout 逐行读事件，多轮复用同一进程。
+ * 工具审批走 `--permission-prompt-tool stdio`：CLI 发 control_request(can_use_tool)，
+ * 我们回 control_response —— 与官方 Agent SDK 同一套协议。
+ *
+ * 进程只是"驱动"，真相仍是它写到 ~/.claude/projects 的 jsonl；
+ * 这里吐出的事件与回放同构且 uid 一致，前端可以无缝合并两条数据流。
+ */
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import {
+  oneLine,
+  summarizeToolInput,
+  type ApprovalDecision,
+  type Item,
+  type ModelInfo,
+  type PermissionMode,
+  type RunHandle,
+  type RunRequest,
+  type RunSink,
+  type RunState,
+  type UnifiedEvent,
+} from '@agentctl/core';
+import { parseLine, turnIndexOf, type ParseCtx } from './parse.ts';
+
+/** 空闲这么久没人说话就关掉进程；会话本身还在磁盘上，下次发消息自动 --resume */
+const IDLE_EXIT_MS = 30 * 60_000;
+const STDERR_KEEP = 4096;
+
+/** 这些 system 子类型是进程内部状态，时间线上没有阅读价值 */
+const QUIET_SYSTEM = new Set(['init', 'status', 'hook_started', 'hook_progress', 'hook_response', 'thinking_tokens']);
+
+interface Pending {
+  toolName: string;
+  input: unknown;
+  suggestions: unknown[];
+  event: UnifiedEvent;
+}
+
+export function buildArgs(req: RunRequest): string[] {
+  const args = [
+    '-p',
+    '--input-format',
+    'stream-json',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--include-partial-messages',
+    // 把我们写进去的用户消息原样回显，带上 uuid，前端才能和磁盘回放去重
+    '--replay-user-messages',
+    '--permission-prompt-tool',
+    'stdio',
+  ];
+  // 只是"允许进入" bypass：默认模式下照样逐个审批，但之后可以在运行中切过去
+  if (req.allowBypass) args.push('--allow-dangerously-skip-permissions');
+  if (req.resumeSessionId) args.push('--resume', req.resumeSessionId);
+  if (req.model && req.model !== 'default') args.push('--model', req.model);
+  if (req.effort) args.push('--effort', req.effort);
+  if (req.permissionMode && req.permissionMode !== 'default') {
+    args.push('--permission-mode', req.permissionMode);
+  }
+  return args;
+}
+
+export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
+  const child = spawn(req.binary ?? 'claude', buildArgs(req), {
+    cwd: req.cwd,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: process.env,
+  });
+
+  let sessionId = req.resumeSessionId ?? '';
+  let resolveSid!: (id: string) => void;
+  let rejectSid!: (err: Error) => void;
+  const sessionIdPromise = new Promise<string>((res, rej) => {
+    resolveSid = res;
+    rejectSid = rej;
+  });
+  // 没人 await 时别变成 unhandledRejection
+  sessionIdPromise.catch(() => undefined);
+  if (sessionId) resolveSid(sessionId);
+
+  const ctx: ParseCtx = { file: '', sessionId, turn: req.startTurn ?? 0 };
+  const pending = new Map<string, Pending>();
+  let seq = 0;
+  let inflight = 0; // 已发出、还没收到 result 的用户消息数
+  let awaitingEcho = 0; // 已发出、还没收到回显的用户消息数
+  let state: RunState = 'starting';
+  let exited = false;
+  let stderrTail = '';
+  let interrupted = false; // 打断后那一轮会以 error_during_execution 收尾，不算失败
+  let idleTimer: NodeJS.Timeout | undefined;
+  /** 我们发出的 control_request 等应答（set_model 等） */
+  const controls = new Map<string, { resolve: (r: Record<string, unknown>) => void; reject: (e: Error) => void }>();
+
+  const setState = (next: RunState, extra: { error?: string; exitCode?: number | null } = {}) => {
+    if (state === next && !extra.error) return;
+    state = next;
+    sink({ type: 'state', state, sessionId: sessionId || undefined, ...extra });
+    clearTimeout(idleTimer);
+    if (state === 'idle') idleTimer = setTimeout(() => handle.stop(), IDLE_EXIT_MS);
+  };
+
+  const emit = (item: Item, uid: string) => {
+    sink({
+      type: 'event',
+      event: {
+        agent: 'claude',
+        sessionId,
+        turn: ctx.turn,
+        seq: seq++,
+        ts: new Date().toISOString(),
+        item,
+        uid,
+        transient: true,
+      },
+    });
+  };
+
+  const write = (obj: unknown) => {
+    if (exited || !child.stdin.writable) throw new Error('agent 进程已退出');
+    child.stdin.write(`${JSON.stringify(obj)}\n`);
+  };
+
+  /** 发一个 control_request 并等 CLI 应答（失败时 reject 带上 CLI 的原因） */
+  const control = (subtype: string, payload: Record<string, unknown>) => {
+    const id = `${subtype}-${seq++}`;
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      controls.set(id, { resolve, reject });
+      try {
+        write({ type: 'control_request', request_id: id, request: { subtype, ...payload } });
+      } catch (err) {
+        controls.delete(id);
+        reject(err as Error);
+      }
+    });
+  };
+
+  const controlResponse = (requestId: string, response: unknown) =>
+    write({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
+
+  const resolveApproval = (requestId: string, approved: boolean) => {
+    const p = pending.get(requestId);
+    if (!p) return;
+    pending.delete(requestId);
+    if (p.event.item.kind !== 'approval') return;
+    sink({
+      type: 'event',
+      event: { ...p.event, item: { ...p.event.item, state: approved ? 'approved' : 'denied' } },
+    });
+  };
+
+  const onLine = (text: string) => {
+    let line: Record<string, unknown>;
+    try {
+      line = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return; // 非 JSON 的杂讯（理论上不会有）
+    }
+    const type = typeof line.type === 'string' ? line.type : '';
+
+    if (!sessionId && typeof line.session_id === 'string' && line.session_id) {
+      sessionId = line.session_id;
+      ctx.sessionId = sessionId;
+      resolveSid(sessionId);
+      sink({ type: 'state', state, sessionId });
+    }
+
+    switch (type) {
+      case 'stream_event': {
+        const ev = line.event as { type?: string; delta?: Record<string, unknown> } | undefined;
+        if (ev?.type === 'message_start') sink({ type: 'delta_reset' });
+        if (ev?.type === 'content_block_delta' && ev.delta) {
+          if (ev.delta.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            sink({ type: 'delta', block: 'text', text: ev.delta.text });
+          } else if (ev.delta.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
+            sink({ type: 'delta', block: 'thinking', text: ev.delta.thinking });
+          }
+        }
+        return;
+      }
+
+      case 'user':
+      case 'assistant': {
+        const t = turnIndexOf(line);
+        if (t !== undefined) ctx.turn = t;
+        else if (type === 'user' && awaitingEcho > 0 && isPromptEcho(line)) {
+          awaitingEcho -= 1;
+          ctx.turn += 1;
+        }
+        // 流里的行有时不带时间戳，补上，否则前端时间槽会显示 1970
+        if (typeof line.timestamp !== 'string') line.timestamp = new Date().toISOString();
+        for (const event of parseLine(line, seq++, ctx)) sink({ type: 'event', event });
+        if (type === 'assistant') sink({ type: 'delta_reset' });
+        if (state === 'starting') setState('running');
+        return;
+      }
+
+      case 'system': {
+        const subtype = typeof line.subtype === 'string' ? line.subtype : '';
+        if (subtype === 'init') {
+          if (state === 'starting') setState(inflight > 0 ? 'running' : 'idle');
+          sink({
+            type: 'config',
+            model: typeof line.model === 'string' ? line.model : undefined,
+            permissionMode: typeof line.permissionMode === 'string' ? (line.permissionMode as PermissionMode) : undefined,
+          });
+        }
+        if (QUIET_SYSTEM.has(subtype)) return;
+        for (const event of parseLine(line, seq++, ctx)) sink({ type: 'event', event });
+        return;
+      }
+
+      case 'result': {
+        inflight = Math.max(0, inflight - 1);
+        const parts: string[] = [];
+        if (typeof line.duration_ms === 'number') parts.push(`本轮耗时 ${(line.duration_ms / 1000).toFixed(1)}s`);
+        if (typeof line.total_cost_usd === 'number') parts.push(`累计 $${line.total_cost_usd.toFixed(4)}`);
+        const failed = line.is_error === true || (typeof line.subtype === 'string' && line.subtype.startsWith('error'));
+        if (failed && interrupted) {
+          // CLI 会自己写一行 "[Request interrupted by user]"，解析成"已打断"，这里不再重复
+        } else if (failed) {
+          const reason = typeof line.result === 'string' ? oneLine(line.result, 200) : String(line.subtype ?? '出错');
+          emit({ kind: 'notice', level: 'error', code: 'result', text: `本轮失败：${reason}` }, `result:${seq}`);
+        } else {
+          emit({ kind: 'notice', level: 'info', code: 'turn_duration', text: parts.join(' · ') || '本轮结束' }, `result:${seq}`);
+        }
+        interrupted = false;
+        sink({ type: 'delta_reset' });
+        setState(inflight > 0 ? 'running' : 'idle');
+        return;
+      }
+
+      case 'control_request': {
+        const requestId = typeof line.request_id === 'string' ? line.request_id : '';
+        const r = (line.request ?? {}) as Record<string, unknown>;
+        if (r.subtype === 'can_use_tool') {
+          const toolName = typeof r.tool_name === 'string' ? r.tool_name : 'tool';
+          const detail =
+            (typeof r.description === 'string' && r.description) || summarizeToolInput(toolName, r.input);
+          const event: UnifiedEvent = {
+            agent: 'claude',
+            sessionId,
+            turn: ctx.turn,
+            seq: seq++,
+            ts: new Date().toISOString(),
+            uid: `approval:${requestId}`,
+            transient: true,
+            item: {
+              kind: 'approval',
+              requestId,
+              tool: toolName,
+              detail,
+              input: r.input,
+              choices: ['allow', 'allow_session', 'deny'],
+              state: 'pending',
+            },
+          };
+          pending.set(requestId, {
+            toolName,
+            input: r.input,
+            suggestions: Array.isArray(r.permission_suggestions) ? r.permission_suggestions : [],
+            event,
+          });
+          sink({ type: 'event', event });
+          return;
+        }
+        // 我们没注册 hook / SDK MCP，其余请求一律明确拒绝，免得 CLI 干等
+        write({
+          type: 'control_response',
+          response: { subtype: 'error', request_id: requestId, error: `agentctl 不支持 ${String(r.subtype)}` },
+        });
+        return;
+      }
+
+      case 'control_response': {
+        const r = (line.response ?? {}) as Record<string, unknown>;
+        const waiter = typeof r.request_id === 'string' ? controls.get(r.request_id) : undefined;
+        if (!waiter) return; // initialize / interrupt 的应答无人等待
+        controls.delete(r.request_id as string);
+        if (r.subtype === 'success') waiter.resolve((r.response ?? {}) as Record<string, unknown>);
+        else waiter.reject(new Error(typeof r.error === 'string' ? r.error : '请求被拒绝'));
+        return;
+      }
+
+      default:
+        // rate_limit_event 等：无需展示
+        return;
+    }
+  };
+
+  createInterface({ input: child.stdout }).on('line', onLine);
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_KEEP);
+  });
+
+  const exitedPromise = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+    const finish = (code: number | null, signal: string | null, spawnError?: Error) => {
+      if (exited) return;
+      exited = true;
+      clearTimeout(idleTimer);
+      for (const id of [...pending.keys()]) resolveApproval(id, false);
+      for (const w of controls.values()) w.reject(new Error('agent 进程已退出'));
+      controls.clear();
+      const reason = spawnError?.message ?? (code ? oneLine(stderrTail, 400) : '');
+      if (reason) emit({ kind: 'notice', level: 'error', code: 'exit', text: `进程退出：${reason}` }, `exit:${seq}`);
+      rejectSid(new Error(reason || 'agent 进程在分配会话前退出'));
+      state = 'exited';
+      sink({ type: 'state', state, sessionId: sessionId || undefined, exitCode: code, error: reason || undefined });
+      resolve({ code, signal });
+    };
+    child.on('error', (err) => finish(null, null, err));
+    child.on('exit', (code, signal) => finish(code, signal));
+  });
+
+  const handle: RunHandle = {
+    sessionId: sessionIdPromise,
+    send(text: string) {
+      write({
+        type: 'user',
+        message: { role: 'user', content: text },
+        parent_tool_use_id: null,
+        session_id: sessionId,
+      });
+      inflight += 1;
+      awaitingEcho += 1;
+      setState('running');
+    },
+    respond(requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) {
+      const p = pending.get(requestId);
+      if (!p) return false;
+      if (decision === 'deny') {
+        controlResponse(requestId, { behavior: 'deny', message: '用户在 agentctl 中拒绝了这次调用' });
+      } else if (answers) {
+        // AskUserQuestion：答案随入参一起回给工具，它会把"问题=答案"交给模型
+        const input = p.input && typeof p.input === 'object' ? (p.input as Record<string, unknown>) : {};
+        controlResponse(requestId, { behavior: 'allow', updatedInput: { ...input, answers } });
+      } else {
+        // "本会话内允许"：采纳 CLI 给的规则建议，但一律降级到 session 作用域，
+        // 绝不替用户把规则写进项目或全局 settings 文件
+        const updatedPermissions =
+          decision === 'allow_session'
+            ? p.suggestions
+                .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+                .map((s) => ({ ...s, destination: 'session' }))
+            : undefined;
+        controlResponse(requestId, { behavior: 'allow', updatedInput: p.input, updatedPermissions });
+      }
+      resolveApproval(requestId, decision !== 'deny');
+      return true;
+    },
+    async setModel(model: string) {
+      const r = await control('set_model', { model });
+      const resolved = typeof r.model === 'string' ? r.model : undefined;
+      sink({ type: 'config', model: resolved ?? model });
+      return resolved;
+    },
+    async setPermissionMode(mode: PermissionMode) {
+      const r = await control('set_permission_mode', { mode });
+      const actual = (typeof r.mode === 'string' ? r.mode : mode) as PermissionMode;
+      sink({ type: 'config', permissionMode: actual });
+      return actual;
+    },
+    interrupt() {
+      for (const id of [...pending.keys()]) handle.respond(id, 'deny');
+      interrupted = true;
+      write({ type: 'control_request', request_id: `interrupt-${seq}`, request: { subtype: 'interrupt' } });
+    },
+    stop() {
+      if (exited) return;
+      child.stdin.end();
+      // 正常情况下 stdin 关闭后 CLI 会自行退出；给它几秒收尾写盘
+      setTimeout(() => {
+        if (!exited) child.kill('SIGTERM');
+      }, 5000).unref();
+    },
+    exited: exitedPromise,
+  };
+
+  write({ type: 'control_request', request_id: 'init', request: { subtype: 'initialize' } });
+  handle.send(req.prompt);
+  return handle;
+}
+
+/** 区分"我们发出的那条提问的回显"与工具结果、系统提醒 */
+function isPromptEcho(line: Record<string, unknown>): boolean {
+  if (line.isMeta === true) return false;
+  const content = (line.message as { content?: unknown } | undefined)?.content;
+  if (typeof content === 'string') return true;
+  if (!Array.isArray(content)) return false;
+  return !content.some((b) => !!b && typeof b === 'object' && (b as { type?: unknown }).type === 'tool_result');
+}
+
+/**
+ * 起一个不发消息的 CLI 进程，只做 initialize 握手拿模型列表就退出。
+ * 列表与终端里 /model 一致，包含别名、完整 id 和支持的推理强度。
+ */
+export function probeModels(binary?: string, timeoutMs = 20_000): Promise<ModelInfo[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary ?? 'claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      env: process.env,
+    });
+    const done = (err: Error | null, models?: ModelInfo[]) => {
+      clearTimeout(timer);
+      child.stdin.end();
+      setTimeout(() => child.kill(), 1000).unref();
+      if (err) reject(err);
+      else resolve(models ?? []);
+    };
+    const timer = setTimeout(() => done(new Error('获取模型列表超时')), timeoutMs);
+    child.on('error', (err) => done(err));
+    createInterface({ input: child.stdout }).on('line', (text) => {
+      let d: Record<string, unknown>;
+      try {
+        d = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (d.type !== 'control_response') return;
+      const raw = ((d.response as { response?: { models?: unknown } } | undefined)?.response?.models ?? []) as unknown[];
+      const models = raw
+        .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object' && typeof (m as { value?: unknown }).value === 'string')
+        .map((m) => ({
+          value: m.value as string,
+          displayName: typeof m.displayName === 'string' ? m.displayName : (m.value as string),
+          description: typeof m.description === 'string' ? m.description : undefined,
+          resolvedModel: typeof m.resolvedModel === 'string' ? m.resolvedModel : undefined,
+          effortLevels: Array.isArray(m.supportedEffortLevels)
+            ? m.supportedEffortLevels.filter((x): x is string => typeof x === 'string')
+            : undefined,
+        }));
+      done(null, models);
+    });
+    child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'init', request: { subtype: 'initialize' } })}\n`);
+  });
+}

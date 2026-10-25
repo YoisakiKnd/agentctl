@@ -1,0 +1,24 @@
+{
+  "name": "agentctl",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @agentctl/server --filter @agentctl/web dev",
+    "dev:server": "pnpm --filter @agentctl/server dev",
+    "dev:web": "pnpm --filter @agentctl/web dev",
+    "build": "pnpm --filter @agentctl/web build",
+    "start": "pnpm --filter @agentctl/server start",
+    "passwd": "pnpm --filter @agentctl/server exec tsx src/index.ts passwd",
+    "status": "pnpm --filter @agentctl/server exec tsx src/index.ts status",
+    "smoke": "pnpm --filter @agentctl/adapter-claude smoke",
+    "typecheck": "pnpm -r typecheck",
+    "smoke:live": "pnpm --filter @agentctl/adapter-claude live-smoke",
+    "service:install": "bash scripts/install-service.sh",
+    "service:uninstall": "bash scripts/install-service.sh --uninstall"
+  }
+}
