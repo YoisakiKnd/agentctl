@@ -295,7 +295,7 @@ React 19 · Vite · TS · TanStack Query（REST）+ 自建 WS 客户端 · Zusta
 
 | 维度 | CloudCLI | agentctl |
 |---|---|---|
-| 许可 | AGPL-3 | 自己定 |
+| 许可 | AGPL-3 | MIT |
 | 扩展方式 | 插件系统（manifest + 前端 API + 后端 server） | 适配器包（一个 `AgentAdapter` 实现即接入） |
 | 会话真相 | 自己的 DB + CLI 状态 | 纯磁盘文件，DB 只是索引，可删库重建 |
 | 运行协议 | 主要靠 stream-json / PTY | 优先用各家原生 RPC（codex app-server / dsh sdk / ACP），stream-json 兜底 |

@@ -167,3 +167,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 新增一个 agent = 实现一个 `AgentAdapter`（`discover` / `replay` / 可选 `refine`、`run`），注册到 `apps/server/src/index.ts` 的 adapters 数组即可。
 
 细节、取舍和里程碑见 [docs/PLAN.md](docs/PLAN.md)。
+
+## 许可
+
+[MIT](LICENSE)
