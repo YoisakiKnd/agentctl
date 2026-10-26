@@ -262,6 +262,29 @@ function ToolApproval({ item, onDecide }: { item: Extract<Item, { kind: 'approva
   );
 }
 
+/** 统一 diff 按行着色；只着色，不做语法高亮 */
+function DiffBody({ patch }: { patch: string }) {
+  return (
+    <pre className="code diff__body">
+      {patch.split('\n').map((line, i) => {
+        const cls = line.startsWith('@@')
+          ? 'diff__hunk'
+          : line.startsWith('+')
+            ? 'diff__add'
+            : line.startsWith('-')
+              ? 'diff__del'
+              : undefined;
+        return (
+          <span key={i} className={cls}>
+            {line}
+            {'\n'}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+
 function renderItem(item: Item, onDecide?: DecideFn) {
   switch (item.kind) {
     case 'text':
@@ -316,12 +339,16 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       return (
         <div className="diff">
           {item.files.map((f) => (
-            <div className="diff__file" key={f.path}>
-              <span className="mono">{f.path}</span>
-              <span className="diff__stat num">
-                +{f.added} −{f.removed}
-              </span>
-            </div>
+            <details className="fold diff__file" key={f.path}>
+              <summary>
+                <span className="tool__name">改动</span>
+                <span className="fold__preview mono">{f.path}</span>
+                <span className="diff__stat num">
+                  <span className="diff__add">+{f.added}</span> <span className="diff__del">−{f.removed}</span>
+                </span>
+              </summary>
+              {f.patch ? <DiffBody patch={f.patch} /> : null}
+            </details>
           ))}
         </div>
       );

@@ -73,6 +73,7 @@ export function summarizeToolInput(name: string, input: unknown): string {
   }
   const candidate =
     pick('command') ??
+    pick('cmd') ??
     pick('file_path') ??
     pick('path') ??
     pick('pattern') ??

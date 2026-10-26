@@ -1,4 +1,5 @@
 import type {
+  AgentId,
   AgentInfo,
   ApprovalDecision,
   EventWindow,
@@ -85,7 +86,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ model }),
     }),
-  startRun: (body: { cwd: string; prompt: string } & RunOptions) =>
+  startRun: (body: { agent?: AgentId; cwd: string; prompt: string } & RunOptions) =>
     request<{ run: RunInfo }>('/api/runs', { method: 'POST', body: JSON.stringify(body) }),
   send: (sessionId: string, text: string, opts: RunOptions = {}) =>
     request<{ run: RunInfo }>(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {

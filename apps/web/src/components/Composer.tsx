@@ -3,9 +3,15 @@ import type { RunOptions } from '../api';
 import { homeShorten } from '../format';
 import { useAllowBypass } from '../caps';
 import { EFFORT_LABEL, isAlias, modelLabel, useModels } from '../models';
-import type { ModelInfo, PermissionMode, RunState } from '../types';
+import type { AgentId, ModelInfo, PermissionMode, RunState } from '../types';
 
-export const MODES: { value: PermissionMode; label: string; hint: string }[] = [
+interface ModeOption {
+  value: PermissionMode;
+  label: string;
+  hint: string;
+}
+
+const MODES: ModeOption[] = [
   { value: 'default', label: '逐个审批', hint: '每次需要权限的工具调用都在网页里确认' },
   { value: 'acceptEdits', label: '自动接受编辑', hint: '文件编辑直接放行，命令仍需确认' },
   { value: 'auto', label: 'Auto 模式', hint: '由分类器自动放行安全操作，有风险的仍会弹审批' },
@@ -13,21 +19,36 @@ export const MODES: { value: PermissionMode; label: string; hint: string }[] = [
   { value: 'bypassPermissions', label: '跳过所有权限', hint: '不再询问任何操作，agent 可以直接执行任意命令' },
 ];
 
+/** Codex 没有"只自动接受编辑"这一档；plan 对应只读沙箱 */
+const CODEX_MODES: ModeOption[] = [
+  { value: 'default', label: '逐个审批', hint: '除只读的安全命令外都要你确认（untrusted）' },
+  { value: 'auto', label: 'Auto 模式', hint: '在工作区沙箱里运行，由 Codex 判断何时需要你确认（on-request）' },
+  { value: 'plan', label: '只读', hint: '只读沙箱：能看不能改，需要写入时会来问你' },
+  { value: 'bypassPermissions', label: '跳过所有权限', hint: '不询问、不加沙箱（danger-full-access）' },
+];
+
+export function modesFor(agent: AgentId): ModeOption[] {
+  return agent === 'codex' ? CODEX_MODES : MODES;
+}
+
 const BYPASS_WARNING =
   '跳过所有权限后，agent 执行任何命令、改任何文件都不再询问。\n只在你信任当前任务和工作目录时使用。确定开启？';
 
 /** 权限模式下拉。选 bypass 要二次确认；服务端禁用 bypass 时不提供该项 */
 export function PermissionSelect({
+  agent,
   value,
   onChange,
   disabled,
 }: {
+  agent: AgentId;
   value: PermissionMode;
   onChange: (v: PermissionMode) => void;
   disabled?: boolean;
 }) {
   const allowBypass = useAllowBypass();
-  const mode = MODES.find((m) => m.value === value) ?? MODES[0];
+  const modes = modesFor(agent);
+  const mode = modes.find((m) => m.value === value) ?? modes[0];
   return (
     <select
       className={`select${value === 'bypassPermissions' ? ' select--danger' : ''}`}
@@ -44,7 +65,7 @@ export function PermissionSelect({
       }}
       aria-label="权限模式"
     >
-      {MODES.filter((m) => m.value !== 'bypassPermissions' || allowBypass || value === m.value).map((m) => (
+      {modes.filter((m) => m.value !== 'bypassPermissions' || allowBypass || value === m.value).map((m) => (
         <option key={m.value} value={m.value}>
           {m.label}
         </option>
@@ -57,15 +78,17 @@ export function PermissionSelect({
 const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
 export function ModelSelect({
+  agent,
   value,
   onChange,
   disabled,
 }: {
+  agent: AgentId;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
 }) {
-  const models = useModels();
+  const models = useModels(agent);
   const option = (m: ModelInfo) => (
     <option key={m.value} value={m.value} title={[m.description, m.resolvedModel].filter(Boolean).join(' · ')}>
       {modelLabel(m, models)}
@@ -92,13 +115,22 @@ export function ModelSelect({
 }
 
 /** 启动进程时才生效的选项：模型、推理强度、权限模式 */
-export function RunOptionFields({ value, onChange }: { value: RunOptions; onChange: (v: RunOptions) => void }) {
-  const models = useModels();
+export function RunOptionFields({
+  agent,
+  value,
+  onChange,
+}: {
+  agent: AgentId;
+  value: RunOptions;
+  onChange: (v: RunOptions) => void;
+}) {
+  const models = useModels(agent);
   const model = models.find((m) => m.value === (value.model ?? 'default'));
   const efforts = model?.effortLevels ?? [];
   return (
     <>
       <ModelSelect
+        agent={agent}
         value={value.model ?? 'default'}
         onChange={(v) => {
           const next = models.find((m) => m.value === v);
@@ -124,6 +156,7 @@ export function RunOptionFields({ value, onChange }: { value: RunOptions; onChan
         </select>
       ) : null}
       <PermissionSelect
+        agent={agent}
         value={value.permissionMode ?? 'default'}
         onChange={(v) => onChange({ ...value, permissionMode: v })}
       />
@@ -139,6 +172,7 @@ export function isSubmitKey(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
 }
 
 export default function Composer({
+  agent,
   path,
   state,
   pending,
@@ -152,6 +186,7 @@ export default function Composer({
   onSetPermissionMode,
   warning,
 }: {
+  agent: AgentId;
   path: string;
   state: RunState | null;
   pending: number;
@@ -205,7 +240,7 @@ export default function Composer({
     ? working
       ? '继续输入会排在当前这一轮之后'
       : '继续对话'
-    : '发送消息，会在终端同一会话上续接（claude --resume）';
+    : `发送消息，会在同一会话上续接（${agent === 'codex' ? 'codex resume' : 'claude --resume'}）`;
 
   return (
     <footer className="composer">
@@ -245,6 +280,7 @@ export default function Composer({
             <>
               {onSetModel ? (
                 <ModelSelect
+                  agent={agent}
                   value={runModel ?? 'default'}
                   disabled={switching}
                   onChange={(m) => {
@@ -255,6 +291,7 @@ export default function Composer({
               ) : null}
               {onSetPermissionMode ? (
                 <PermissionSelect
+                  agent={agent}
                   value={runPermissionMode ?? 'default'}
                   disabled={switching}
                   onChange={(m) => {
@@ -268,7 +305,7 @@ export default function Composer({
               </button>
             </>
           ) : (
-            <RunOptionFields value={opts} onChange={setOpts} />
+            <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
           )}
         </span>
       </div>

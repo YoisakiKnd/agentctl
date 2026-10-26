@@ -7,7 +7,7 @@
 
 ## 现在能做什么
 
-- **在网页里跑 Claude Code**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
+- **在网页里跑 Claude Code 和 Codex**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **会话看板**：按项目分组，显示标题、首条提问、轮数、花费、体积、最近活动时间；搜索标题/路径/首条消息；侧脊按 agent 过滤。
@@ -41,6 +41,7 @@ pnpm start                # http://127.0.0.1:8787
 ```bash
 pnpm smoke                # 解析器冒烟：发现耗时、最大会话首屏、向前翻页、refine
 pnpm smoke:live           # 实时运行冒烟：真的跑一次 claude（haiku，约 $0.003）走完审批与续问
+pnpm smoke:codex          # Codex 解析冒烟：发现、每个会话首屏、uid 唯一性、轮次
 pnpm typecheck            # 四个包的 tsc --noEmit
 pnpm status               # 看配置、监听地址、是否已设密码
 ```
@@ -70,6 +71,7 @@ pnpm service:install                             # 构建前端 + 装成 systemd
 | `password` | — | `pnpm passwd` 写入的 scrypt 哈希 |
 | `allowedRoots` | `[]` | 网页端可作为工作目录的路径白名单，空表示不限 |
 | `allowBypassPermissions` | `true` | 设为 `false` 后网页端不提供「跳过所有权限」 |
+| `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex`） |
 | `cookieSecure` | `false` | 放在 HTTPS 反代后面时打开 |
 | `tls.cert` / `tls.key` | — | 直接以 HTTPS 提供服务 |
 
@@ -117,9 +119,16 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - **终端（Shell 模式）**：会话页右上角「终端」打开真正的 `claude --resume <会话>`（斜杠命令、/model 菜单等 TUI 功能都在），也可以切到普通 shell。终端进程在服务端常驻，刷新、手机切后台后自动重连并回放；手机上有 Esc / Tab / ^C / 方向键条。同一会话的终端和输入框进程互斥。
 - 已知限制：打断时已生成的半段文字不保留。
 
+## Codex 怎么接的
+
+- **回放**：rollout 有两代格式，逐行看有没有 `ordinal` 区分。新版取 `item_completed`（真实执行的命令、带统一 diff 的文件改动、网页搜索），旧版取 `response_item` + `event_msg`。标题来自 `session_index.jsonl`，Guardian 审查这类子代理会话在列表里标成「子代理」。
+- **轮次**：Codex 的行上没有轮号，只有每轮一条 `task_started`；按字节偏移建索引并增量更新，任意窗口都能定位轮次。
+- **实时**：一个会话一个 `codex app-server` 进程，`thread/start` / `thread/resume` + 每条消息一个 `turn/start`。实时 item 归一成文件格式后走同一个解析器，uid 与磁盘一致。
+- **权限模式**映射为 Codex 的审批策略 + 沙箱：逐个审批 = untrusted + workspace-write，Auto = on-request + workspace-write，只读 = on-request + read-only，跳过所有权限 = never + danger-full-access；运行中切换从下一轮生效。
+
 ## 隐私边界
 
-- 只读 agent 的会话文件（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`、`~/.pi/agent/sessions`），不写、不移动、不删除。
+- 回放只读 agent 的会话文件（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`、`~/.pi/agent/sessions`），不写、不移动、不删除；实时运行时由 agent 自己写盘。
 - 不解析任何凭证文件（`~/.claude/settings.json`、`~/.codex/auth.json` 等），只探测存在性。
 - `~/.agentctl/index.db` 是纯索引（标题、轮数、花费、字节偏移），删了下次启动自动重建。
 - 图片只记 `[图片 12.3KB]` 这样的占位，不把 base64 塞进页面。
@@ -129,6 +138,7 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 ```
 packages/core              统一事件模型、按字节窗口的读行工具、文本裁剪、AgentAdapter 接口
 packages/adapter-claude    Claude Code 适配器：discover / replay / refine（index.ts）、行解析（parse.ts）、实时运行（live.ts）
+packages/adapter-codex     Codex 适配器：同上结构；实时运行走 codex app-server
 apps/server                Fastify：配置、鉴权、SQLite 索引、扫描缓存、运行进程表（runs.ts）、REST + SSE、静态托管
 apps/web                   React + Vite：看板、时间线、composer、审批、新会话、设置、登录
 docs/PLAN.md               技术方案（勘察数据、架构、里程碑、风险）
@@ -160,7 +170,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | Agent | 只读回放 | 实时运行 |
 |---|---|---|
 | Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 打断 + Shell 模式 |
-| Codex | 计划 M2（`~/.codex/sessions` + `app-server`） | 计划 M2 |
+| Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答、打断、运行中切模型 / 权限 + Shell 模式 |
 | DSH | 计划 M3（zstd 增量解压 + `--profile sdk`） | 计划 M3 |
 | Pi / Cursor | 计划 M4 | 计划 M4 |
 

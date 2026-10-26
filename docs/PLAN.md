@@ -382,4 +382,23 @@ M1 剩余：partial 输出在打断时的保留。
 | Shell 模式 | node-pty + xterm.js（懒加载）+ WebSocket。默认 `claude --resume <会话>` 真 TUI，也可开普通 shell；终端在服务端常驻，断线重连回放最近 256KB 输出；与网页进程互斥，避免两个进程写同一会话；WebSocket 同源校验 |
 | 部署 | `pnpm service:install` → systemd 用户服务；`CHANGELOG.md` |
 
-下一步：M2 Codex 适配器（`rollout-*.jsonl` 回放 + `codex app-server`）。
+---
+
+## 14. 0.3.0：M2 Codex
+
+| 项 | 实测 |
+|---|---|
+| 发现 9 个会话（含 2 个 Guardian 子代理） | 26ms |
+| 4.2MB 会话首屏 | 309 条事件 / 43ms，uid 全部唯一 |
+| 实时：提问 → 命令审批 → 执行 → 同进程第二轮 | 实时事件 100% 在磁盘回放里找到同 uid，轮次一致 |
+| 运行中切到跳过所有权限 | 下一轮不再弹审批 |
+| 刷新页面 | 无重复，审批卡在原位 |
+
+取舍：
+
+- **新版格式只认 item_completed**：response_item 里新版是 JS 编排代码（`exec` 自定义工具），对人不可读；item_completed 才是真实执行的命令与 diff。
+- **用量与本轮耗时不从实时流发**：文件里有 `token_usage_record` / `task_complete`，2 秒轮询就能追上，实时也发会在刷新前重复计数。
+- **模型 / 权限按轮生效**：app-server 没有"改线程设置"的接口，但 `turn/start` 接受 `model`、`approvalPolicy`、`sandboxPolicy` 覆盖，切换后从下一轮起生效。
+- **本机 bubblewrap 不可用**：Codex 的 workspace-write 沙箱在这台机器上建不了 user namespace，部分命令会在沙箱里失败后转为请求授权。这是 Codex 自身与宿主环境的问题，TUI 里一样。
+
+下一步：M3 DSH（zstd 增量解压 + `--profile sdk`）。

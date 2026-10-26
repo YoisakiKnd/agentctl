@@ -4,14 +4,18 @@ export type Route =
   | { name: 'dashboard' }
   | { name: 'session'; id: string }
   | { name: 'shell'; id: string; kind: 'agent' | 'shell' }
-  | { name: 'new'; cwd?: string }
+  | { name: 'new'; cwd?: string; agent?: 'claude' | 'codex' }
   | { name: 'settings' }
   | { name: 'login' };
 
 export function parseHash(hash: string): Route {
   const [path, query = ''] = (hash.replace(/^#/, '') || '/').split('?');
   if (path === '/' || path === '') return { name: 'dashboard' };
-  if (path === '/new') return { name: 'new', cwd: new URLSearchParams(query).get('cwd') ?? undefined };
+  if (path === '/new') {
+    const q = new URLSearchParams(query);
+    const agent = q.get('agent');
+    return { name: 'new', cwd: q.get('cwd') ?? undefined, agent: agent === 'codex' || agent === 'claude' ? agent : undefined };
+  }
   if (path === '/settings') return { name: 'settings' };
   if (path === '/login') return { name: 'login' };
   const sh = /^\/s\/(.+)\/shell$/.exec(path);
@@ -42,8 +46,12 @@ export function sessionHref(id: string): string {
   return `#/s/${encodeURIComponent(id)}`;
 }
 
-export function newSessionHref(cwd?: string): string {
-  return cwd ? `#/new?cwd=${encodeURIComponent(cwd)}` : '#/new';
+export function newSessionHref(cwd?: string, agent?: string): string {
+  const q = new URLSearchParams();
+  if (cwd) q.set('cwd', cwd);
+  if (agent) q.set('agent', agent);
+  const qs = q.toString();
+  return qs ? `#/new?${qs}` : '#/new';
 }
 
 export function shellHref(id: string, kind: 'agent' | 'shell' = 'agent'): string {

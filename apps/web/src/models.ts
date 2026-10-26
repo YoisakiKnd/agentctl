@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import type { ModelInfo } from './types';
+import type { AgentId, ModelInfo } from './types';
 
 /** 拿不到 CLI 列表时（旧版本、命令行不可用）的兜底 */
 const FALLBACK: ModelInfo[] = [
@@ -10,25 +10,32 @@ const FALLBACK: ModelInfo[] = [
   { value: 'haiku', displayName: 'Haiku' },
 ];
 
-let cache: Promise<ModelInfo[]> | null = null;
+const DEFAULT_ONLY: ModelInfo[] = [{ value: 'default', displayName: 'Default' }];
 
-/** 模型列表直接来自 CLI 的 initialize 握手，与终端里 /model 看到的一致 */
-export function useModels(): ModelInfo[] {
-  const [models, setModels] = useState<ModelInfo[]>(FALLBACK);
+const cache = new Map<string, Promise<ModelInfo[]>>();
+
+/** 模型列表直接来自各 agent 的命令行（Claude 的 initialize、Codex 的 model/list），与终端里看到的一致 */
+export function useModels(agent: AgentId = 'claude'): ModelInfo[] {
+  const fallback = agent === 'claude' ? FALLBACK : DEFAULT_ONLY;
+  const [models, setModels] = useState<ModelInfo[]>(fallback);
   useEffect(() => {
-    cache ??= api
-      .models('claude')
-      .then((r) => (r.models.length ? r.models : FALLBACK))
-      .catch(() => {
-        cache = null; // 下次再试
-        return FALLBACK;
-      });
+    let p = cache.get(agent);
+    if (!p) {
+      p = api
+        .models(agent)
+        .then((r) => (r.models.length ? r.models : fallback))
+        .catch(() => {
+          cache.delete(agent); // 下次再试
+          return fallback;
+        });
+      cache.set(agent, p);
+    }
     let alive = true;
-    void cache.then((m) => alive && setModels(m));
+    void p.then((m) => alive && setModels(m));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [agent, fallback]);
   return models;
 }
 
@@ -49,4 +56,5 @@ export const EFFORT_LABEL: Record<string, string> = {
   high: '高',
   xhigh: '很高',
   max: '最高',
+  ultra: '极限',
 };

@@ -210,6 +210,10 @@ export class ClaudeAdapter implements AgentAdapter {
     return { turns, costUsd, preview };
   }
 
+  resumeArgs(session: SessionSummary): string[] {
+    return ['--resume', session.sessionId];
+  }
+
   run(req: RunRequest, sink: RunSink): RunHandle {
     return startClaudeRun(req, sink);
   }

@@ -344,8 +344,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       if (!shells.get(key) && active && active.state !== 'exited') {
         return fail('这个会话正在网页里运行（输入框那边的进程）。先点「结束进程」，再打开终端，免得两个进程同时写同一个会话');
       }
+      if (!adapter?.resumeArgs) return fail(`${adapter?.meta.name ?? session.agent} 不支持在终端里续接`);
       file = binary;
-      args = ['--resume', session.sessionId];
+      args = adapter.resumeArgs(session);
     } else {
       file = process.env.SHELL || '/bin/bash';
       args = ['-l'];

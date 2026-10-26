@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { sessionHref, shellHref } from '../router';
+import { AGENT_LABEL, type AgentId } from '../types';
 
 type Status = 'connecting' | 'open' | 'reconnecting' | 'exited' | 'error';
 
@@ -164,7 +165,7 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
   };
 
   const kill = () => {
-    if (!confirm(kind === 'agent' ? '结束这个 claude 终端进程？会话已保存，可随时续接。' : '结束这个 shell？')) return;
+    if (!confirm(kind === 'agent' ? '结束这个终端里的 agent 进程？会话已保存，可随时续接。' : '结束这个 shell？')) return;
     const ws = socket.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'kill' }));
   };
@@ -180,7 +181,7 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
         <span className="term__title">{title || '终端'}</span>
         <nav className="term__tabs">
           <a className={`term__tab${kind === 'agent' ? ' is-on' : ''}`} href={shellHref(id, 'agent')}>
-            Claude
+            {AGENT_LABEL[id.split(':')[0] as AgentId] ?? 'Agent'}
           </a>
           <a className={`term__tab${kind === 'shell' ? ' is-on' : ''}`} href={shellHref(id, 'shell')}>
             Shell

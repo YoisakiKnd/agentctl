@@ -58,7 +58,7 @@ export default function App() {
     );
   }
   if (route.name === 'session') return <Session id={route.id} />;
-  if (route.name === 'new') return <NewSession cwd={route.cwd} />;
+  if (route.name === 'new') return <NewSession cwd={route.cwd} agent={route.agent} />;
   if (route.name === 'settings') return <Settings authRequired={me.authRequired} onLogout={refreshMe} />;
   return <Dashboard />;
 }

@@ -51,6 +51,7 @@ function defaults(): Config {
     allowBypassPermissions: true,
     agents: {
       claude: { enabled: true },
+      codex: { enabled: true },
     },
   };
 }

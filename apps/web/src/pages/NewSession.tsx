@@ -3,11 +3,13 @@ import { api, type RunOptions } from '../api';
 import { isSubmitKey, RunOptionFields } from '../components/Composer';
 import { homeShorten, projectName } from '../format';
 import { navigate, sessionHref } from '../router';
-import type { SessionSummary } from '../types';
+import { AGENT_LABEL, type AgentId, type AgentInfo, type SessionSummary } from '../types';
 
-/** 在某个目录里新开一个 Claude Code 会话 */
-export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
+/** 在某个目录里新开一个会话（Claude Code / Codex） */
+export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { cwd?: string; agent?: AgentId }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [agent, setAgent] = useState<AgentId>(initialAgent ?? 'claude');
   const [cwd, setCwd] = useState(initialCwd ?? '');
   const [prompt, setPrompt] = useState('');
   const [opts, setOpts] = useState<RunOptions>({});
@@ -22,6 +24,11 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
         // 没指定目录时默认最近活跃的项目
         setCwd((cur) => cur || sessions.find((s) => s.cwd)?.cwd || '');
       })
+      .catch(() => undefined);
+    // 只列出命令行可用、并且接入了实时运行的 agent
+    api
+      .agents()
+      .then(({ agents }) => setAgents(agents.filter((a) => a.available && a.capabilities.live)))
       .catch(() => undefined);
   }, []);
 
@@ -42,7 +49,7 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
     setBusy(true);
     setError('');
     try {
-      const { run } = await api.startRun({ cwd: cwd.trim(), prompt, ...opts });
+      const { run } = await api.startRun({ agent, cwd: cwd.trim(), prompt, ...opts });
       if (!run.sessionKey) throw new Error('agent 没有返回会话 id');
       navigate(sessionHref(run.sessionKey).slice(1));
     } catch (err) {
@@ -59,7 +66,7 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
           <a className="nav" href="#/">
             <span className="nav__label">会话</span>
           </a>
-          <span className="nav is-active" style={{ '--agent': 'var(--claude)' } as React.CSSProperties}>
+          <span className="nav is-active" style={{ '--agent': `var(--${agent})` } as React.CSSProperties}>
             <span className="nav__label">新会话</span>
           </span>
         </nav>
@@ -67,7 +74,7 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
 
       <main className="board board--narrow">
         <header className="board__head">
-          <h1 className="board__title">新会话 · Claude Code</h1>
+          <h1 className="board__title">新会话 · {AGENT_LABEL[agent]}</h1>
           <a className="linkbtn board__back" href="#/">
             返回会话
           </a>
@@ -80,6 +87,29 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
             void start();
           }}
         >
+          {agents.length > 1 ? (
+            <div className="field">
+              <span className="field__label">Agent</span>
+              <div className="newform__recent">
+                {agents.map((a) => (
+                  <button
+                    type="button"
+                    key={a.id}
+                    className={`chip chip--btn${a.id === agent ? ' is-on' : ''}`}
+                    style={{ '--agent': `var(--${a.id})` } as React.CSSProperties}
+                    onClick={() => {
+                      setAgent(a.id);
+                      // 模型和权限选项各家不同，换 agent 时回到默认
+                      setOpts({});
+                    }}
+                  >
+                    {AGENT_LABEL[a.id]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <label className="field">
             <span className="field__label">工作目录（agent 会在这里读写文件、执行命令）</span>
             <input
@@ -134,15 +164,16 @@ export default function NewSession({ cwd: initialCwd }: { cwd?: string }) {
           </label>
 
           <div className="newform__actions">
-            <RunOptionFields value={opts} onChange={setOpts} />
+            <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
             <button className="btn btn--primary" type="submit" disabled={busy || !cwd.trim() || !prompt.trim()}>
               {busy ? '启动中…' : '开始'}
             </button>
           </div>
           {error ? <div className="login__error">{error}</div> : null}
           <p className="newform__note">
-            会话照常写进 <span className="mono">~/.claude/projects</span>，之后在终端里
-            <span className="mono"> claude --resume </span>也能接着聊。
+            会话照常写进 <span className="mono">{agent === 'codex' ? '~/.codex/sessions' : '~/.claude/projects'}</span>
+            ，之后在终端里
+            <span className="mono"> {agent === 'codex' ? 'codex resume' : 'claude --resume'} </span>也能接着聊。
           </p>
         </form>
       </main>

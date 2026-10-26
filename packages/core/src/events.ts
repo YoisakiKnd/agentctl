@@ -103,6 +103,8 @@ export interface SessionSummary {
   preview?: string;
   /** 解析过程中遇到的不认识的行类型数量，用于提示"格式变了" */
   unknownTypes?: Record<string, number>;
+  /** 子代理会话（例如 Codex 的 Guardian 审查），值为子代理名；列表里弱化显示 */
+  subagent?: string;
 }
 
 export interface EventWindow {

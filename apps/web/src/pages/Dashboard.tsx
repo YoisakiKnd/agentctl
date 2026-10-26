@@ -15,7 +15,7 @@ interface Group {
 function SessionRow({ s, showAgent, live }: { s: SessionSummary; showAgent: boolean; live: boolean }) {
   return (
     <a
-      className="sess"
+      className={`sess${s.subagent ? ' sess--sub' : ''}`}
       href={sessionHref(s.id)}
       style={{ '--agent': `var(--${s.agent})` } as React.CSSProperties}
     >
@@ -24,6 +24,11 @@ function SessionRow({ s, showAgent, live }: { s: SessionSummary; showAgent: bool
         {live ? <span className="live-dot" aria-label="运行中" /> : null}
         <span className="sess__t">{s.title}</span>
         {showAgent ? <span className="sess__agent">{AGENT_LABEL[s.agent]}</span> : null}
+        {s.subagent ? (
+          <span className="sess__agent" title="子代理会话：由 agent 自动发起，不是你直接对话的">
+            子代理 · {s.subagent}
+          </span>
+        ) : null}
       </span>
       <span className="sess__time num">{timeAgo(s.updatedAt)}</span>
       <span className="sess__preview">{s.preview || <span className="is-faint">没有可预览的提问</span>}</span>
@@ -170,7 +175,7 @@ export default function Dashboard() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <a className="btn btn--sm btn--primary board__new" href={newSessionHref()}>
+          <a className="btn btn--sm btn--primary board__new" href={newSessionHref(undefined, agent === 'all' ? undefined : agent)}>
             新会话
           </a>
         </header>
@@ -200,7 +205,7 @@ export default function Dashboard() {
               <span className="group__path mono">{homeShorten(g.cwd)}</span>
               <span className="group__count num">{g.sessions.length}</span>
               {g.cwd ? (
-                <a className="linkbtn group__new" href={newSessionHref(g.cwd)} title="在这个项目里开一个新会话">
+                <a className="linkbtn group__new" href={newSessionHref(g.cwd, g.sessions[0]?.agent)} title="在这个项目里开一个新会话">
                   ＋ 新会话
                 </a>
               ) : null}

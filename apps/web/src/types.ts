@@ -19,7 +19,7 @@ export type Item =
   | { kind: 'thinking'; text: string; durationMs?: number }
   | { kind: 'tool_call'; callId: string; name: string; input: unknown; summary?: string }
   | { kind: 'tool_result'; callId: string; ok: boolean; output: string; truncated?: TruncInfo }
-  | { kind: 'diff'; files: { path: string; added: number; removed: number }[] }
+  | { kind: 'diff'; files: { path: string; added: number; removed: number; patch?: string }[] }
   | {
       kind: 'usage';
       model?: string;
@@ -67,6 +67,7 @@ export interface SessionSummary {
   updatedAt: string;
   preview?: string;
   unknownTypes?: Record<string, number>;
+  subagent?: string;
 }
 
 export interface EventWindow {

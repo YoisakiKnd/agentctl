@@ -51,6 +51,8 @@ export interface AgentAdapter {
    * 会话页靠它增量追新内容——不管会话是网页里跑的还是终端里跑的。
    */
   replayAfter?(session: SessionSummary, after: number, maxBytes?: number): Promise<EventWindow>;
+  /** 可选：在真终端里续接这个会话的参数（Shell 模式用），例如 claude 是 ['--resume', id] */
+  resumeArgs?(session: SessionSummary): string[];
   /** 可选：该 agent 命令行当前能用的模型（与终端里 /model 看到的一致） */
   models?(binary?: string): Promise<ModelInfo[]>;
   /** 可选：启动一次实时运行（新建或续接）。capabilities.live 为 false 的适配器不实现 */

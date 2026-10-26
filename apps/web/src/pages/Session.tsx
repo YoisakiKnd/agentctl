@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, HttpError } from '../api';
-import Composer, { MODES } from '../components/Composer';
+import Composer, { modesFor } from '../components/Composer';
 import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
 import { mergeEvents, useLiveRun } from '../live';
@@ -321,7 +321,7 @@ export default function Session({ id }: { id: string }) {
   }, []);
   const externalWriteAgo = session && runState === null ? Math.round((now - session.mtime) / 1000) : Infinity;
   const warning = agentShell
-    ? '这个会话正在网页终端里运行 claude。要在这里发消息，先到终端里 /exit。'
+    ? '这个会话正在网页终端里运行。要在这里发消息，先在终端里退出（/exit）。'
     : externalWriteAgo < 60
       ? `这个会话 ${Math.max(externalWriteAgo, 1)} 秒前刚被写入，可能正在终端里使用。两边同时发消息会让记录交错。`
       : undefined;
@@ -408,7 +408,7 @@ export default function Session({ id }: { id: string }) {
             <a
               className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}
               href={shellHref(id)}
-              title="打开真终端：claude --resume 这个会话，或在会话目录开 shell"
+              title="打开真终端：在网页里续接这个会话（claude --resume / codex resume），或在会话目录开 shell"
             >
               {agentShell ? <span className="live-dot" aria-hidden="true" /> : null}
               终端
@@ -416,7 +416,7 @@ export default function Session({ id }: { id: string }) {
           ) : null}
           {processAlive && live.permissionMode && live.permissionMode !== 'default' ? (
             <span className={`mode-badge${live.permissionMode === 'bypassPermissions' ? ' is-danger' : ''}`}>
-              {MODES.find((m) => m.value === live.permissionMode)?.label ?? live.permissionMode}
+              {modesFor(session?.agent ?? 'claude').find((m) => m.value === live.permissionMode)?.label ?? live.permissionMode}
             </span>
           ) : null}
           {status.text ? (
@@ -458,6 +458,7 @@ export default function Session({ id }: { id: string }) {
         {canRun && session ? (
           <Composer
             key={id}
+            agent={session.agent}
             path={session.cwd}
             state={runState}
             pending={pending}
@@ -476,7 +477,7 @@ export default function Session({ id }: { id: string }) {
             <span className="session__path mono" title={session?.file}>
               {session ? homeShorten(session.file) : ''}
             </span>
-            <span className="session__note">该 agent 暂未接入实时运行，只能回放</span>
+            <span className="session__note">这个 agent 还不能在输入框里对话，可以点右上角「终端」续接</span>
           </footer>
         )}
       </main>

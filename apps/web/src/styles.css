@@ -1991,3 +1991,40 @@ span.nav {
 .term__screen .xterm-screen {
   background-color: var(--bg) !important;
 }
+
+/* ── diff：每个文件一行摘要，展开看着色补丁 ─────────────────── */
+
+.diff__file {
+  display: block;
+  border-left: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+.diff__file > summary .diff__stat {
+  margin-left: auto;
+  flex: none;
+  font-size: 11.5px;
+}
+
+.diff__add {
+  color: #8fbf8a;
+}
+
+.diff__del {
+  color: #e7a08f;
+}
+
+.diff__hunk {
+  color: var(--text-faint);
+}
+
+.diff__body {
+  white-space: pre;
+}
+
+/* 子代理会话：由 agent 自动发起，列表里弱化 */
+.sess--sub .sess__t,
+.sess--sub .sess__preview {
+  color: var(--text-faint);
+}

@@ -7,6 +7,7 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { ClaudeAdapter } from '@agentctl/adapter-claude';
+import { CodexAdapter } from '@agentctl/adapter-codex';
 import type { AgentAdapter } from '@agentctl/core';
 import { CONFIG_PATH, expandHome, isLoopback, loadConfig, saveConfig, DB_PATH } from './config.ts';
 import { hashPassword, LoginThrottle } from './auth.ts';
@@ -16,7 +17,7 @@ import { registerRoutes } from './routes.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 interface ServeOptions {
   host?: string;
@@ -87,7 +88,10 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
     process.exit(1);
   }
 
-  const adapters: AgentAdapter[] = [new ClaudeAdapter()];
+  // 新增 agent：在这里加一个实现即可；config.yaml 里 agents.<id>.enabled: false 可以关掉
+  const adapters: AgentAdapter[] = [new ClaudeAdapter(), new CodexAdapter()].filter(
+    (a) => cfg.agents[a.id]?.enabled !== false,
+  );
   const db = new IndexDb(DB_PATH);
   const registry = new Registry(adapters, db);
   // 进程结束后会话文件变了（轮次、花费），让列表重扫
