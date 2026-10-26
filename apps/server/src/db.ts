@@ -40,18 +40,22 @@ export class IndexDb {
   }
 
   /** 只有文件没变（size+mtime 一致）才复用上次扫描结果 */
-  getRefined(id: string, size: number, mtime: number): RefinedRow | null {
+  /**
+   * fresh：文件没变（size+mtime 一致），结果就是准的；
+   * 否则如果文件只是变长了（会话文件只追加），旧结果仍可作为下限使用，但需要重新补全。
+   */
+  getRefined(id: string, size: number, mtime: number): (RefinedRow & { fresh: boolean }) | null {
     const row = this.db
       .prepare('SELECT turns, cost_usd, preview, size, mtime FROM session_meta WHERE id = ?')
       .get(id) as
       | { turns: number; cost_usd: number | null; preview: string | null; size: number; mtime: number }
       | undefined;
-    if (!row) return null;
-    if (row.size !== size || row.mtime !== mtime) return null;
+    if (!row || size < row.size) return null;
     return {
       turns: row.turns,
       costUsd: row.cost_usd ?? undefined,
       preview: row.preview ?? undefined,
+      fresh: row.size === size && row.mtime === mtime,
     };
   }
 

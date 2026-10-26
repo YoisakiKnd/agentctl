@@ -2068,3 +2068,110 @@ span.nav {
   border-top: 1px solid var(--line);
   margin: 14px 0;
 }
+
+/* ── 全文搜索 ───────────────────────────────────────────── */
+
+.search__form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  max-width: 560px;
+  margin-left: auto;
+}
+
+.search__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 10px;
+}
+
+.search__status {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  padding: 6px 0 2px;
+}
+
+.hit {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 10px 7px 16px;
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  font-size: 13.5px;
+}
+
+.hit:hover {
+  background: var(--panel-2);
+  border-left-color: var(--agent);
+}
+
+.hit__meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.hit__kind {
+  color: var(--text-dim);
+}
+
+.hit__text {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+mark {
+  background: rgba(224, 102, 58, 0.22);
+  color: var(--text);
+  padding: 0 1px;
+}
+
+/* 跳转命中的那一条：左侧一道状态色竖线，不改底色、不加阴影 */
+.ev.is-hit {
+  position: relative;
+}
+
+.ev.is-hit::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--live);
+}
+
+.ev.is-hit .msg,
+.ev.is-hit .fold > summary {
+  color: var(--text);
+}
+
+.jumpbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: baseline;
+  font-size: 12.5px;
+  border-top: 1px solid var(--line-soft);
+  margin-top: 18px;
+  padding-top: 10px;
+}
+
+@media (max-width: 900px) {
+  .search__form {
+    max-width: none;
+    order: 2;
+    flex: 1 1 100%;
+  }
+
+  .hit {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 8px 4px 8px 12px;
+  }
+}

@@ -1,7 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { oneLine, type ApprovalDecision, type EventWindow, type PermissionMode, type SessionSummary } from '@agentctl/core';
+import { oneLine, searchQuery, type ApprovalDecision, type EventWindow, type PermissionMode, type SearchHit, type SessionSummary } from '@agentctl/core';
 import {
   COOKIE_NAME,
   SESSION_TTL_MS,
@@ -145,6 +145,10 @@ function placeholderSummary(run: RunInfo): SessionSummary {
   };
 }
 
+const SEARCH_MAX_HITS = 200;
+const SEARCH_PER_SESSION = 20;
+const SEARCH_BUDGET_MS = 15_000;
+
 const EMPTY_WINDOW: EventWindow = { events: [], nextBefore: null, hasMore: false, window: { start: 0, end: 0 } };
 
 export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
@@ -255,12 +259,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     if (!session) return reply.code(404).send({ error: '会话不存在' });
     const adapter = registry.adapter(session.agent);
     const openShells = shells.list().filter((sh) => sh.key.startsWith(`${id}:`) && !sh.exited);
-    return { session, run, canRun: !!adapter?.run, shells: openShells };
+    return { session, run, canRun: !!adapter?.run, canResumeInTerminal: !!adapter?.resumeArgs, shells: openShells };
   });
 
   app.get('/api/sessions/:id/events', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const q = req.query as { before?: string; after?: string; maxBytes?: string };
+    const q = req.query as { before?: string; after?: string; through?: string; maxBytes?: string };
     // 增量：从上次窗口末尾读到文件末尾。会话页每隔两秒问一次，文件没变时只是一次 stat
     if (q.after !== undefined) {
       const after = Number(q.after);
@@ -278,12 +282,17 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       return adapter.replayAfter(session, after);
     }
     const before = q.before ? Number(q.before) : undefined;
+    const through = q.through !== undefined ? Number(q.through) : undefined;
+    if (through !== undefined && (!Number.isInteger(through) || through < 0)) {
+      return reply.code(400).send({ error: 'through 必须是非负整数字节偏移' });
+    }
     const maxBytes = q.maxBytes ? Number(q.maxBytes) : undefined;
     if (before !== undefined && (!Number.isFinite(before) || before < 0)) {
       return reply.code(400).send({ error: 'before 必须是正整数字节偏移' });
     }
     const window = await registry.events(id, {
       before,
+      through,
       maxBytes: maxBytes && maxBytes > 0 ? Math.min(maxBytes, 16 * 1024 * 1024) : undefined,
     });
     if (!window) {
@@ -291,6 +300,40 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       return reply.code(404).send({ error: '会话不存在' });
     }
     return window;
+  });
+
+  /* ── 全文搜索 ─────────────────────────────────────────── */
+
+  // 不建索引，按最近活动顺序逐个会话扫文件；命中够数或超时就停，告诉前端结果不完整
+  app.get('/api/search', async (req, reply) => {
+    const qs = req.query as { q?: string; agent?: string };
+    const text = (qs.q ?? '').trim();
+    if (!text) return reply.code(400).send({ error: '搜索词不能为空' });
+    if (text.length > 200) return reply.code(400).send({ error: '搜索词太长' });
+    const query = searchQuery(text);
+    const started = Date.now();
+    const results: { session: SessionSummary; hits: SearchHit[] }[] = [];
+    let total = 0;
+    let truncated = false;
+    for (const session of await registry.list()) {
+      if (qs.agent && session.agent !== qs.agent) continue;
+      if (total >= SEARCH_MAX_HITS || Date.now() - started > SEARCH_BUDGET_MS) {
+        truncated = true;
+        break;
+      }
+      const adapter = registry.adapter(session.agent);
+      if (!adapter?.search || !session.file) continue;
+      try {
+        const hits = await adapter.search(session, query, Math.min(SEARCH_PER_SESSION, SEARCH_MAX_HITS - total));
+        if (hits.length) {
+          results.push({ session, hits });
+          total += hits.length;
+        }
+      } catch (err) {
+        app.log.warn({ err, session: session.id }, 'search failed');
+      }
+    }
+    return { results, total, truncated, ms: Date.now() - started };
   });
 
   /* ── 实时运行 ─────────────────────────────────────────── */

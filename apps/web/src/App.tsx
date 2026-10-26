@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Session from './pages/Session';
 import Settings from './pages/Settings';
 import NewSession from './pages/NewSession';
+import Search from './pages/Search';
 
 // xterm 体积不小，只有打开终端时才加载
 const Shell = lazy(() => import('./pages/Shell'));
@@ -57,7 +58,8 @@ export default function App() {
       </Suspense>
     );
   }
-  if (route.name === 'session') return <Session id={route.id} />;
+  if (route.name === 'session') return <Session id={route.id} at={route.at} />;
+  if (route.name === 'search') return <Search q={route.q} agent={route.agent} />;
   if (route.name === 'new') return <NewSession cwd={route.cwd} agent={route.agent} />;
   if (route.name === 'settings') return <Settings authRequired={me.authRequired} onLogout={refreshMe} />;
   return <Dashboard />;

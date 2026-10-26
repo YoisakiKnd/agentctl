@@ -3,7 +3,7 @@
  * 磁盘上的 jsonl 与 `claude -p --output-format stream-json` 吐出的 user/assistant 行同构，
  * 回放和实时运行共用这里的解析，保证两边事件长得一样、uid 一致。
  */
-import { clip, flattenContent, oneLine, summarizeToolInput, type Item, type UnifiedEvent } from '@agentctl/core';
+import { clip, flattenContent, lineDiff, oneLine, summarizeToolInput, type Item, type UnifiedEvent } from '@agentctl/core';
 
 /** 这些行是 Claude Code 的内部记账，对阅读时间线没有价值 */
 export const NOISE = new Set([
@@ -229,6 +229,11 @@ export function parseLine(
         }
         case 'tool_use': {
           const name = typeof b.name === 'string' ? b.name : 'tool';
+          const diff = editDiff(name, b.input);
+          if (diff) {
+            push(diff);
+            break;
+          }
           push({
             kind: 'tool_call',
             callId: typeof b.id === 'string' ? b.id : '',
@@ -289,4 +294,40 @@ function systemText(subtype: string, content: string): string {
   const text = oneLine((stdout ?? content).replace(/<[^>]+>/g, ' '), 240);
   if (!text) return '';
   return subtype === 'away_summary' ? `离开期间小结：${text}` : text;
+}
+
+/**
+ * 改文件的工具直接显示成 diff，比一大段 JSON 入参好读：
+ * Edit / MultiEdit 用 old_string → new_string 求行级 diff，Write 显示为整文件新增。
+ */
+function editDiff(name: string, input: unknown): Item | null {
+  if (!input || typeof input !== 'object') return null;
+  const i = input as Record<string, unknown>;
+  const path = typeof i.file_path === 'string' ? i.file_path : undefined;
+  if (!path) return null;
+
+  const pairs: [string, string][] = [];
+  if (name === 'Edit' && typeof i.old_string === 'string' && typeof i.new_string === 'string') {
+    pairs.push([i.old_string, i.new_string]);
+  } else if (name === 'MultiEdit' && Array.isArray(i.edits)) {
+    for (const e of i.edits) {
+      const r = (e ?? {}) as Record<string, unknown>;
+      if (typeof r.old_string === 'string' && typeof r.new_string === 'string') pairs.push([r.old_string, r.new_string]);
+    }
+  } else if (name === 'Write' && typeof i.content === 'string') {
+    pairs.push(['', i.content]);
+  } else {
+    return null;
+  }
+  if (pairs.length === 0) return null;
+
+  let added = 0;
+  let removed = 0;
+  const hunks = pairs.map(([before, after]) => {
+    const d = lineDiff(before, after);
+    added += d.added;
+    removed += d.removed;
+    return d.patch;
+  });
+  return { kind: 'diff', files: [{ path, added, removed, patch: clip(hunks.join('\n@@\n'), 8000).text }] };
 }

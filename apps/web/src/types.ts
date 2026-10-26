@@ -151,3 +151,22 @@ export const AGENT_LABEL: Record<AgentId, string> = {
   pi: 'Pi',
   cursor: 'Cursor',
 };
+
+export interface SearchHit {
+  offset: number;
+  uid?: string;
+  turn: number;
+  ts: string;
+  kind: Item['kind'];
+  role?: 'user' | 'assistant';
+  before: string;
+  match: string;
+  after: string;
+}
+
+export interface SearchResult {
+  results: { session: SessionSummary; hits: SearchHit[] }[];
+  total: number;
+  truncated: boolean;
+  ms: number;
+}

@@ -418,4 +418,17 @@ M1 剩余：partial 输出在打断时的保留。
 - **Node 的 zstd 不支持多帧**（原计划写的"createZstdDecompress 支持多 frame 拼接"不成立：第二帧报 Unknown frame descriptor），改为自己切帧。
 - **没有 TUI 续接**：这台机器只装了 web 配置，没有 tui，DSH 会话的终端只给普通 shell。
 
-下一步：M4（全文搜索、Claude 的 Edit/Write 显示为 diff、用量统计、Pi / Cursor）。
+---
+
+## 16. 0.5.0：M4 第一部分
+
+| 项 | 实现 / 实测 |
+|---|---|
+| 全文搜索 | 不建索引直接扫：粗筛用 JSON 转义后的关键词 + 不区分大小写正则，与普通 includes 速度相当（175MB 约 0.4s）；全部会话约 2.5s |
+| 跳转 | `events?through=<offset>` 窗口以命中行结尾 + 一页后文；`data-seq` 定位，超高条目从顶部显示 |
+| Claude diff | Edit / MultiEdit 行级 LCS（任一侧 >400 行退化为整段替换），Write 为整文件新增；实时与回放同一解析，uid 不变 |
+| Pi | 会话树：最后写入的记录沿 parentId 回溯到根即当前分支 |
+
+为什么不按原计划用 SQLite FTS5：全部会话 600MB+ 原文，建索引要复制一份大文本进库，且每次追加都要增量维护；而直接扫描 2.5 秒对"偶尔搜一次"足够，且永远与磁盘一致。
+
+剩余：用量统计（需要完整解析所有会话并缓存，单独做）、Cursor（本机未安装）。

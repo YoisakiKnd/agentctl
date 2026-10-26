@@ -180,7 +180,8 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
         </a>
         <span className="term__title">{title || '终端'}</span>
         <nav className="term__tabs">
-          {id.startsWith('dsh:') ? null : (
+          {/* DSH、Pi 没有可续接的 TUI，只给 shell */}
+          {id.startsWith('dsh:') || id.startsWith('pi:') ? null : (
             <a className={`term__tab${kind === 'agent' ? ' is-on' : ''}`} href={shellHref(id, 'agent')}>
               {AGENT_LABEL[id.split(':')[0] as AgentId] ?? 'Agent'}
             </a>

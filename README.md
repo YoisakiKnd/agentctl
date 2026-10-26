@@ -10,6 +10,8 @@
 - **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
+- **全文搜索**：一次扫所有 agent 的全部会话（不建索引），只匹配人能读到的内容（提问、回复、思考、命令、输出、diff），点结果直接跳到会话里的那一条并高亮。本机约 600MB 会话一次约 2.5 秒。
+- **改文件看 diff**：Claude 的 Edit / MultiEdit / Write、Codex 的 apply_patch / FileChange 都显示为可展开的着色 diff。
 - **会话看板**：按项目分组，显示标题、首条提问、轮数、花费、体积、最近活动时间；搜索标题/路径/首条消息；侧脊按 agent 过滤。
 - **时间线回放**：一轮一轮往下读，人类提问、助手文本（Markdown）、thinking、工具调用与结果、后台任务通知、每轮耗时与 token 用量、本轮模型。
 - **大文件不卡**：175MB / 13839 行的会话首屏 **约 20ms**（尾部优先按字节窗口读，向前翻页带游标）。
@@ -43,6 +45,7 @@ pnpm smoke                # 解析器冒烟：发现耗时、最大会话首屏�
 pnpm smoke:live           # 实时运行冒烟：真的跑一次 claude（haiku，约 $0.003）走完审批与续问
 pnpm smoke:codex          # Codex 解析冒烟：发现、每个会话首屏、uid 唯一性、轮次
 pnpm smoke:dsh            # DSH 解析冒烟（zstd 多帧解压 + 解析）
+pnpm smoke:pi             # Pi 解析冒烟（会话树取当前分支）
 pnpm typecheck            # 四个包的 tsc --noEmit
 pnpm status               # 看配置、监听地址、是否已设密码
 ```
@@ -72,7 +75,7 @@ pnpm service:install                             # 构建前端 + 装成 systemd
 | `password` | — | `pnpm passwd` 写入的 scrypt 哈希 |
 | `allowedRoots` | `[]` | 网页端可作为工作目录的路径白名单，空表示不限 |
 | `allowBypassPermissions` | `true` | 设为 `false` 后网页端不提供「跳过所有权限」 |
-| `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex` / `dsh`） |
+| `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex` / `dsh` / `pi`） |
 | `cookieSecure` | `false` | 放在 HTTPS 反代后面时打开 |
 | `tls.cert` / `tls.key` | — | 直接以 HTTPS 提供服务 |
 
@@ -149,6 +152,7 @@ packages/core              统一事件模型、按字节窗口的读行工具�
 packages/adapter-claude    Claude Code 适配器：discover / replay / refine（index.ts）、行解析（parse.ts）、实时运行（live.ts）
 packages/adapter-codex     Codex 适配器：同上结构；实时运行走 codex app-server
 packages/adapter-dsh       DeepSeek Harness 适配器：zstd 增量解压回放；实时运行走 dsh --profile acp
+packages/adapter-pi        Pi 适配器：只读回放（会话树取当前分支）
 apps/server                Fastify：配置、鉴权、SQLite 索引、扫描缓存、运行进程表（runs.ts）、REST + SSE、静态托管
 apps/web                   React + Vite：看板、时间线、composer、审批、新会话、设置、登录
 docs/PLAN.md               技术方案（勘察数据、架构、里程碑、风险）
@@ -165,6 +169,8 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/sessions/:id` | 单个会话摘要 + 当前运行（如有）+ 是否支持实时运行 |
 | GET | `/api/sessions/:id/events?before=&maxBytes=` | 时间线窗口（`before` 是字节偏移，向前翻页） |
 | GET | `/api/sessions/:id/events?after=` | 增量：从上次窗口末尾读到文件末尾（文件没变时只是一次 stat） |
+| GET | `/api/sessions/:id/events?through=` | 跳转：窗口以这个偏移所在的行结尾 |
+| GET | `/api/search?q=&agent=` | 全文搜索；最多 200 处、单会话 20 处、15 秒上限，超出时 `truncated: true` |
 | GET | `/api/agents/:id/models` | CLI 当前可用的模型（`initialize` 握手拿到，不花钱，缓存 10 分钟） |
 | POST | `/api/runs/:id/model` | 运行中切换模型 `{model}` |
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |
@@ -182,7 +188,8 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 打断 + Shell 模式 |
 | Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答、打断、运行中切模型 / 权限 + Shell 模式 |
 | DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、打断、运行中切模型（网页终端只提供普通 shell） |
-| Pi / Cursor | 计划 M4 | 计划 M4 |
+| Pi | ✅ 已接入（`~/.pi/agent/sessions`，会话树取当前分支，含花费） | 本机未装 `pi` 命令行，只读 |
+| Cursor | 本机未安装、无会话数据 | — |
 
 新增一个 agent = 实现一个 `AgentAdapter`（`discover` / `replay` / 可选 `refine`、`run`），注册到 `apps/server/src/index.ts` 的 adapters 数组即可。
 

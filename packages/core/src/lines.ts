@@ -185,3 +185,40 @@ function splitLines(buf: Buffer, from: number, stop: number): { lines: Line[] } 
   }
   return { lines };
 }
+
+/** offset 所在行的行尾（换行之后的位置）。跳转到某一行时，窗口要以它为终点才能完整包含这一行 */
+export async function lineEndAt(file: string, offset: number): Promise<number> {
+  const fh = await open(file, 'r');
+  try {
+    const size = (await fh.stat()).size;
+    let pos = Math.min(Math.max(offset, 0), size);
+    const buf = Buffer.alloc(256 * 1024);
+    while (pos < size) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, size - pos), pos);
+      if (bytesRead <= 0) break;
+      const nl = buf.subarray(0, bytesRead).indexOf(0x0a);
+      if (nl !== -1) return pos + nl + 1;
+      pos += bytesRead;
+    }
+    return size;
+  } finally {
+    await fh.close();
+  }
+}
+
+export function bufferLineEndAt(buf: Buffer, offset: number): number {
+  const nl = buf.indexOf(0x0a, Math.max(offset, 0));
+  return nl === -1 ? buf.length : nl + 1;
+}
+
+/** 逐行遍历内存里的内容（搜索压缩会话用） */
+export function* bufferLines(buf: Buffer): Generator<Line> {
+  let p = 0;
+  while (p < buf.length) {
+    const nl = buf.indexOf(0x0a, p);
+    const end = nl === -1 ? buf.length : nl;
+    if (end > p) yield { text: buf.toString('utf8', p, end), offset: p };
+    if (nl === -1) break;
+    p = nl + 1;
+  }
+}

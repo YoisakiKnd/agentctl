@@ -1,4 +1,5 @@
 import type { AgentId, EventWindow, SessionSummary, UnifiedEvent } from './events.ts';
+import type { SearchHit, SearchQuery } from './search.ts';
 
 export interface AgentMeta {
   name: string;
@@ -28,6 +29,8 @@ export interface ReplayOptions {
   before?: number;
   /** 单窗口字节预算 */
   maxBytes?: number;
+  /** 跳转用：窗口以"这个偏移所在的那一行"结尾（优先于 before） */
+  through?: number;
 }
 
 /**
@@ -56,6 +59,8 @@ export interface AgentAdapter {
    * 压缩存储的会话（DSH）游标是解压后的偏移，必须实现它。
    */
   contentLength?(session: SessionSummary): Promise<number>;
+  /** 可选：全文搜索这个会话（见 core/search.ts 的两段式匹配） */
+  search?(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]>;
   /** 可选：在真终端里续接这个会话的参数（Shell 模式用），例如 claude 是 ['--resume', id] */
   resumeArgs?(session: SessionSummary): string[];
   /** 可选：该 agent 命令行当前能用的模型（与终端里 /model 看到的一致） */

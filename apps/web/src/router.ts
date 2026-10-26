@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 
 export type Route =
   | { name: 'dashboard' }
-  | { name: 'session'; id: string }
+  | { name: 'session'; id: string; at?: number }
+  | { name: 'search'; q: string; agent?: string }
   | { name: 'shell'; id: string; kind: 'agent' | 'shell' }
   | { name: 'new'; cwd?: string; agent?: 'claude' | 'codex' | 'dsh' }
   | { name: 'settings' }
@@ -23,8 +24,15 @@ export function parseHash(hash: string): Route {
     const kind = new URLSearchParams(query).get('kind') === 'shell' ? 'shell' : 'agent';
     return { name: 'shell', id: decodeURIComponent(sh[1]), kind };
   }
+  if (path === '/search') {
+    const q = new URLSearchParams(query);
+    return { name: 'search', q: q.get('q') ?? '', agent: q.get('agent') ?? undefined };
+  }
   const m = /^\/s\/(.+)$/.exec(path);
-  if (m) return { name: 'session', id: decodeURIComponent(m[1]) };
+  if (m) {
+    const at = Number(new URLSearchParams(query).get('at'));
+    return { name: 'session', id: decodeURIComponent(m[1]), at: Number.isInteger(at) && at >= 0 && query.includes('at=') ? at : undefined };
+  }
   return { name: 'dashboard' };
 }
 
@@ -42,8 +50,14 @@ export function navigate(to: string): void {
   location.hash = to;
 }
 
-export function sessionHref(id: string): string {
-  return `#/s/${encodeURIComponent(id)}`;
+export function sessionHref(id: string, at?: number): string {
+  return `#/s/${encodeURIComponent(id)}${at !== undefined ? `?at=${at}` : ''}`;
+}
+
+export function searchHref(q: string, agent?: string): string {
+  const p = new URLSearchParams({ q });
+  if (agent) p.set('agent', agent);
+  return `#/search?${p}`;
 }
 
 export function newSessionHref(cwd?: string, agent?: string): string {

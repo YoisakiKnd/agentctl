@@ -53,6 +53,7 @@ function defaults(): Config {
       claude: { enabled: true },
       codex: { enabled: true },
       dsh: { enabled: true },
+      pi: { enabled: true },
     },
   };
 }

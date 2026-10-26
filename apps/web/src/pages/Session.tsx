@@ -4,7 +4,7 @@ import Composer, { modesFor } from '../components/Composer';
 import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
 import { mergeEvents, useLiveRun } from '../live';
-import { sessionHref, shellHref } from '../router';
+import { navigate, sessionHref, shellHref } from '../router';
 import type { ApprovalDecision, PermissionMode, RunInfo, RunState, SessionSummary, UnifiedEvent } from '../types';
 import { AGENT_LABEL } from '../types';
 import type { RunOptions } from '../api';
@@ -37,9 +37,11 @@ function stateLabel(state: RunState | null, pending: number, canRun: boolean): {
   }
 }
 
-export default function Session({ id }: { id: string }) {
+export default function Session({ id, at }: { id: string; at?: number }) {
   const [session, setSession] = useState<SessionSummary | null>(null);
   const [canRun, setCanRun] = useState(false);
+  /** 能在网页终端里打开这个 agent 自己的 TUI 续接（claude --resume / codex resume） */
+  const [canResume, setCanResume] = useState(false);
   const [file, setFile] = useState<FileView>(EMPTY_FILE);
   const [runId, setRunId] = useState<string | null>(null);
   const [runModel, setRunModel] = useState<string | undefined>();
@@ -49,6 +51,9 @@ export default function Session({ id }: { id: string }) {
   const [liveRuns, setLiveRuns] = useState<RunInfo[]>([]);
   const [railOpen, setRailOpen] = useState(false);
   const [unseen, setUnseen] = useState(false);
+  /** 搜索跳转模式下，命中位置之后还有没加载的内容 */
+  const [forwardMore, setForwardMore] = useState(false);
+  const jumped = useRef(false);
   /** 这个会话正在网页终端里跑 claude TUI */
   const [agentShell, setAgentShell] = useState(false);
 
@@ -155,16 +160,31 @@ export default function Session({ id }: { id: string }) {
     setUnseen(false);
     setError('');
 
+    jumped.current = false;
+    setForwardMore(false);
+
     (async () => {
       try {
-        const [detail, win] = await Promise.all([api.session(id), api.events(id)]);
+        // 搜索跳转：窗口以命中那一行结尾，再往后补一页，命中处前后都有上下文
+        const [detail, win] = await Promise.all([
+          api.session(id),
+          at !== undefined ? api.eventsThrough(id, at) : api.events(id),
+        ]);
+        const fwd = at !== undefined ? await api.eventsAfter(id, win.window.end) : null;
         if (cancelled) return;
         setSession(detail.session);
         setCanRun(detail.canRun);
+        setCanResume(!!detail.canResumeInTerminal);
         setAgentShell(!!detail.shells?.some((sh) => sh.kind === 'agent'));
-        fileEnd.current = win.window.end;
+        fileEnd.current = fwd ? fwd.window.end : win.window.end;
         lastMetaAt.current = Date.now();
-        setFile({ events: win.events, cursor: win.nextBefore, hasMore: win.hasMore });
+        if (fwd) {
+          // 不贴底：读者要看的是命中处
+          anchored.current = true;
+          stick.current = false;
+          setForwardMore(fwd.hasMore);
+        }
+        setFile({ events: fwd ? [...win.events, ...fwd.events] : win.events, cursor: win.nextBefore, hasMore: win.hasMore });
         // 还活着（或刚结束）的运行：接上它的事件流
         if (detail.run) {
           setRunId(detail.run.id);
@@ -178,11 +198,35 @@ export default function Session({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
+  }, [id, at]);
+
+  // 跳转后把命中那一条滚到视口中间。content-visibility 下前面的行高度是估算的，
+  // 真实高度回填后位置会漂，所以稍后再校正一次
+  useEffect(() => {
+    if (at === undefined || jumped.current || file.events.length === 0) return;
+    const el = scroller.current?.querySelector(`[data-seq="${at}"]`);
+    if (!el) return;
+    jumped.current = true;
+    // 比视口还高的条目（长回复）从顶部开始显示，否则关键词可能落在视口之外
+    const block = () =>
+      el.getBoundingClientRect().height > (scroller.current?.clientHeight ?? 0) * 0.8 ? 'start' : 'center';
+    el.scrollIntoView({ block: block() });
+    const t = setTimeout(() => el.scrollIntoView({ block: block() }), 350);
+    return () => clearTimeout(t);
+  }, [at, file.events]);
+
+  const loadForward = useCallback(async () => {
+    const win = await api.eventsAfter(id, fileEnd.current);
+    fileEnd.current = win.window.end;
+    setForwardMore(win.hasMore);
+    setFile((cur) => ({ ...cur, events: [...cur.events, ...win.events] }));
   }, [id]);
 
-  // 页面可见时每 2 秒追一次文件尾；文件没变时服务端只做一次 stat
+  // 页面可见时每 2 秒追一次文件尾；文件没变时服务端只做一次 stat。
+  // 搜索跳转模式下不追：否则会一页页读到文件末尾，把读者从命中处带走
   useEffect(() => {
     const tick = () => {
+      if (at !== undefined) return;
       if (document.visibilityState === 'visible' && anchored.current) void pollTail();
     };
     // 有我们起的进程在跑时加快到 1 秒：DSH 的时间线完全靠追文件
@@ -192,7 +236,7 @@ export default function Session({ id }: { id: string }) {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [pollTail, processAlive]);
+  }, [pollTail, processAlive, at]);
 
   // 侧栏会话列表与运行标记：15 秒刷新一次
   useEffect(() => {
@@ -236,11 +280,11 @@ export default function Session({ id }: { id: string }) {
     if (!anchored.current || stick.current) {
       anchored.current = true;
       toBottom();
-    } else if (newest !== lastUid.current) {
+    } else if (newest !== lastUid.current && at === undefined) {
       setUnseen(true);
     }
     lastUid.current = newest;
-  }, [events, live.draft, toBottom]);
+  }, [events, live.draft, toBottom, at]);
 
   // Markdown 渲染、content-visibility 的真实高度回填都会在事件到达之后才撑高内容，
   // 只靠上面的 effect 会停在"差一点到底"的位置，所以盯着内容高度继续贴底
@@ -281,12 +325,17 @@ export default function Session({ id }: { id: string }) {
   const send = useCallback(
     async (text: string, opts: RunOptions) => {
       const { run } = await api.send(id, text, processAlive ? {} : opts);
+      // 从搜索结果跳进来的：发了消息就回到正常的"跟随最新"视图
+      if (at !== undefined) {
+        navigate(sessionHref(id).slice(1));
+        return;
+      }
       stick.current = true;
       setUnseen(false);
       setRunId(run.id);
       setRunModel(run.model);
     },
-    [id, processAlive],
+    [id, processAlive, at],
   );
 
   const setModel = useCallback(
@@ -408,8 +457,8 @@ export default function Session({ id }: { id: string }) {
           {session ? (
             <a
               className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}
-              // DSH 没有可续接的 TUI，直接给会话目录里的 shell
-              href={shellHref(id, session.agent === 'dsh' ? 'shell' : 'agent')}
+              // 没有可续接的 TUI（DSH、Pi），直接给会话目录里的 shell
+              href={shellHref(id, canResume ? 'agent' : 'shell')}
               title="打开真终端：在网页里续接这个会话（claude --resume / codex resume），或在会话目录开 shell"
             >
               {agentShell ? <span className="live-dot" aria-hidden="true" /> : null}
@@ -447,7 +496,20 @@ export default function Session({ id }: { id: string }) {
           )}
           {error ? <div className="empty empty--error">{error}</div> : null}
           <div ref={rows}>
-            <Timeline events={events} onDecide={runId ? decide : undefined} draft={live.draft} />
+            <Timeline events={events} onDecide={runId ? decide : undefined} draft={live.draft} highlight={at} />
+            {at !== undefined ? (
+              <div className="jumpbar">
+                <span className="is-faint">正在查看搜索命中的位置</span>
+                {forwardMore ? (
+                  <button className="linkbtn" onClick={() => void loadForward()}>
+                    加载后面的内容
+                  </button>
+                ) : null}
+                <a className="linkbtn" href={sessionHref(id)}>
+                  回到最新
+                </a>
+              </div>
+            ) : null}
             {live.error && runState === 'exited' ? <div className="notice notice--error">{live.error}</div> : null}
           </div>
           {unseen ? (
@@ -480,7 +542,9 @@ export default function Session({ id }: { id: string }) {
             <span className="session__path mono" title={session?.file}>
               {session ? homeShorten(session.file) : ''}
             </span>
-            <span className="session__note">这个 agent 还不能在输入框里对话，可以点右上角「终端」续接</span>
+            <span className="session__note">
+              {canResume ? '这个 agent 还不能在输入框里对话，可以点右上角「终端」续接' : '这个 agent 目前只能回放'}
+            </span>
           </footer>
         )}
       </main>

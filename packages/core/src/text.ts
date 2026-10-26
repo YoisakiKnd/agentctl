@@ -3,7 +3,15 @@ import type { MediaRef, TruncInfo } from './events.ts';
 /** 单条文本保留上限：再长的工具输出对阅读无益，且会把前端拖死 */
 export const MAX_TEXT_CHARS = 4000;
 
-export function clip(text: string, max = MAX_TEXT_CHARS): { text: string; truncated?: TruncInfo } {
+/** 终端颜色 / 光标控制序列：网页里不渲染它们，只会显示成乱码 */
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+export function stripAnsi(text: string): string {
+  return text.includes('\x1b') ? text.replace(ANSI, '') : text;
+}
+
+export function clip(raw: string, max = MAX_TEXT_CHARS): { text: string; truncated?: TruncInfo } {
+  const text = stripAnsi(raw);
   if (text.length <= max) return { text };
   const head = Math.floor(max * 0.75);
   const tail = max - head;
@@ -83,4 +91,47 @@ export function summarizeToolInput(name: string, input: unknown): string {
   if (candidate) return oneLine(candidate, 160);
   const first = Object.values(i).find((v) => typeof v === 'string') as string | undefined;
   return first ? oneLine(first, 160) : name;
+}
+
+/**
+ * 两段文本的按行 diff（LCS），输出统一 diff 风格的行：' ' 上下文、'-' 删除、'+' 新增。
+ * 只用于展示 agent 的 Edit 这类小片段；任一侧超过 400 行就退化为整段删 + 整段加，免得 O(n·m) 失控。
+ */
+export function lineDiff(before: string, after: string): { patch: string; added: number; removed: number } {
+  const a = before ? before.split('\n') : [];
+  const b = after ? after.split('\n') : [];
+  const out: string[] = [];
+  if (a.length > 400 || b.length > 400) {
+    for (const l of a) out.push(`-${l}`);
+    for (const l of b) out.push(`+${l}`);
+    return { patch: out.join('\n'), added: b.length, removed: a.length };
+  }
+  // dp[i][j] = a[i..] 与 b[j..] 的最长公共子序列长度
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  let added = 0;
+  let removed = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      out.push(` ${a[i]}`);
+      i += 1;
+      j += 1;
+    } else if (i < a.length && (j === b.length || dp[i + 1][j] >= dp[i][j + 1])) {
+      // 同等长度时先删后加，和 git diff 的习惯一致
+      out.push(`-${a[i]}`);
+      i += 1;
+      removed += 1;
+    } else {
+      out.push(`+${b[j]}`);
+      j += 1;
+      added += 1;
+    }
+  }
+  return { patch: out.join('\n'), added, removed };
 }

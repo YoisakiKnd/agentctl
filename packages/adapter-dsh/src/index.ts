@@ -2,10 +2,13 @@ import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { open, readdir, stat } from 'node:fs/promises';
 import {
+  bufferLineEndAt,
+  bufferLines,
   bufferLinesBefore,
   bufferLinesFrom,
   oneLine,
   safeJsonParse,
+  searchLines,
   zstdDecompressFrames,
   type AgentAdapter,
   type EventWindow,
@@ -14,6 +17,8 @@ import {
   type RunHandle,
   type RunRequest,
   type RunSink,
+  type SearchHit,
+  type SearchQuery,
   type SessionSummary,
   type UnifiedEvent,
 } from '@agentctl/core';
@@ -264,7 +269,8 @@ export class DshAdapter implements AgentAdapter {
 
   async replay(session: SessionSummary, opts: ReplayOptions = {}): Promise<EventWindow> {
     const data = await this.decoded(session.file);
-    const win = bufferLinesBefore(data, opts.before ?? data.length, opts.maxBytes ?? 2 * 1024 * 1024);
+    const end = opts.through !== undefined ? bufferLineEndAt(data, opts.through) : (opts.before ?? data.length);
+    const win = bufferLinesBefore(data, end, opts.maxBytes ?? 2 * 1024 * 1024);
     return {
       events: this.parseWindow(session, win.lines),
       nextBefore: win.start > 0 ? win.start : null,
@@ -277,6 +283,27 @@ export class DshAdapter implements AgentAdapter {
     const data = await this.decoded(session.file);
     const win = bufferLinesFrom(data, after, maxBytes);
     return { events: this.parseWindow(session, win.lines), nextBefore: null, hasMore: win.hasMore, window: { start: win.start, end: win.end } };
+  }
+
+  async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {
+    const data = await this.decoded(session.file);
+    const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0, model: session.model, turnStartedAt: new Map() };
+    return searchLines(
+      bufferLines(data),
+      q,
+      (l) => {
+        const d = safeJsonParse(l.text) as Rec | null;
+        return d ? parseLine(d, l.offset, ctx) : [];
+      },
+      {
+        limit,
+        // 轮号在 data 开头附近，只看行首一小段
+        visit: (l) => {
+          const m = /"turn":(\d+)/.exec(l.text.slice(0, 160));
+          if (m) ctx.turn = Number(m[1]);
+        },
+      },
+    );
   }
 
   run(req: RunRequest, sink: RunSink): RunHandle {

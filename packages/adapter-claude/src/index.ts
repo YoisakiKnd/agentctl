@@ -5,13 +5,17 @@ import {
   flattenContent,
   oneLine,
   readLinesBefore,
+  lineEndAt,
   readLinesFrom,
   safeJsonParse,
+  searchLines,
   streamLines,
   type AgentAdapter,
   type EventWindow,
   type ModelInfo,
   type ReplayOptions,
+  type SearchHit,
+  type SearchQuery,
   type RunHandle,
   type RunRequest,
   type RunSink,
@@ -124,7 +128,7 @@ export class ClaudeAdapter implements AgentAdapter {
   async replay(session: SessionSummary, opts: ReplayOptions = {}): Promise<EventWindow> {
     const maxBytes = opts.maxBytes ?? 2 * 1024 * 1024;
     const size = (await stat(session.file)).size;
-    const end = opts.before ?? size;
+    const end = opts.through !== undefined ? await lineEndAt(session.file, opts.through) : (opts.before ?? size);
     const win = await readLinesBefore(session.file, end, maxBytes);
 
     const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0 };
@@ -208,6 +212,26 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     return { turns, costUsd, preview };
+  }
+
+  async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {
+    const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0 };
+    return searchLines(
+      streamLines(session.file),
+      q,
+      (l) => {
+        const d = safeJsonParse(l.text) as Record<string, unknown> | null;
+        return d ? parseLine(d, l.offset, ctx) : [];
+      },
+      {
+        limit,
+        // 轮号直接从行里摘，不必为了它解析每一行
+        visit: (l) => {
+          const m = /"turnIndex":(\d+)/.exec(l.text);
+          if (m) ctx.turn = Number(m[1]);
+        },
+      },
+    );
   }
 
   resumeArgs(session: SessionSummary): string[] {

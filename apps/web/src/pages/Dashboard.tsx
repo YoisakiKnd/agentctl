@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { newSessionHref, sessionHref } from '../router';
+import { navigate, newSessionHref, searchHref, sessionHref } from '../router';
 import type { AgentId, RunInfo, SessionSummary, Stats } from '../types';
 import { AGENT_LABEL } from '../types';
 import { formatBytes, formatCost, homeShorten, projectName, timeAgo } from '../format';
@@ -160,6 +160,9 @@ export default function Dashboard() {
           <button className="linkbtn" onClick={() => void load(true)} disabled={busy}>
             {busy ? '扫描中…' : '重新扫描'}
           </button>
+          <a className="linkbtn" href={searchHref('')}>
+            搜索
+          </a>
           <a className="linkbtn" href="#/settings">
             设置
           </a>
@@ -171,9 +174,15 @@ export default function Dashboard() {
           <h1 className="board__title">{title}</h1>
           <input
             className="input input--search"
-            placeholder="搜索标题、路径、首条消息"
+            placeholder="筛选标题、路径；回车搜全文"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // 输入框本身只筛列表；回车才去扫所有会话的内容
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && query.trim()) {
+                navigate(searchHref(query.trim(), agent === 'all' ? undefined : agent).slice(1));
+              }
+            }}
           />
           <a className="btn btn--sm btn--primary board__new" href={newSessionHref(undefined, agent === 'all' ? undefined : agent)}>
             新会话
@@ -194,7 +203,10 @@ export default function Dashboard() {
         {!error && data && data.sessions.length > 0 && filtered.length === 0 ? (
           <div className="empty">
             <p className="empty__title">没有匹配的会话</p>
-            <p className="empty__body">换个关键词，或者回到「全部会话」。</p>
+            <p className="empty__body">
+              这里只筛标题和路径。按回车可以在所有会话的内容里
+              <a href={searchHref(query.trim())}>搜索「{query.trim()}」</a>。
+            </p>
           </div>
         ) : null}
 

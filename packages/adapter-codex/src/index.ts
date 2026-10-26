@@ -2,10 +2,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import {
+  lineEndAt,
   oneLine,
   readLinesBefore,
   readLinesFrom,
   safeJsonParse,
+  searchLines,
   streamLines,
   type AgentAdapter,
   type EventWindow,
@@ -15,6 +17,8 @@ import {
   type RunHandle,
   type RunRequest,
   type RunSink,
+  type SearchHit,
+  type SearchQuery,
   type SessionSummary,
   type UnifiedEvent,
 } from '@agentctl/core';
@@ -212,7 +216,8 @@ export class CodexAdapter implements AgentAdapter {
 
   async replay(session: SessionSummary, opts: ReplayOptions = {}): Promise<EventWindow> {
     const size = (await stat(session.file)).size;
-    const win = await readLinesBefore(session.file, opts.before ?? size, opts.maxBytes ?? 2 * 1024 * 1024);
+    const end = opts.through !== undefined ? await lineEndAt(session.file, opts.through) : (opts.before ?? size);
+    const win = await readLinesBefore(session.file, end, opts.maxBytes ?? 2 * 1024 * 1024);
     const starts = await this.turnStarts(session);
     return {
       events: this.parseWindow(session, win.lines, starts),
@@ -231,6 +236,27 @@ export class CodexAdapter implements AgentAdapter {
       hasMore: win.hasMore,
       window: { start: win.start, end: win.end },
     };
+  }
+
+  async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {
+    const starts = await this.turnStarts(session);
+    const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0, model: session.model };
+    let i = 0;
+    return searchLines(
+      streamLines(session.file),
+      q,
+      (l) => {
+        const d = safeJsonParse(l.text) as Rec | null;
+        return d ? parseLine(d, l.offset, ctx) : [];
+      },
+      {
+        limit,
+        visit: (l) => {
+          while (i < starts.length && starts[i] <= l.offset) i += 1;
+          ctx.turn = i;
+        },
+      },
+    );
   }
 
   run(req: RunRequest, sink: RunSink): RunHandle {

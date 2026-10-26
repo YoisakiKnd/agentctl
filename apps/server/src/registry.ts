@@ -85,7 +85,7 @@ export class Registry {
 
   async events(
     id: string,
-    opts: { before?: number; maxBytes?: number } = {},
+    opts: { before?: number; through?: number; maxBytes?: number } = {},
   ): Promise<EventWindow | null> {
     const session = await this.get(id);
     if (!session) return null;
@@ -140,10 +140,12 @@ export class Registry {
   private applyRefined(s: SessionSummary): SessionSummary {
     const row = this.db.getRefined(s.id, s.sizeBytes, s.mtime);
     if (!row) return s;
+    // 过期的补全结果（文件后来又变长了）只当下限用：轮次、累计花费都只增不减
+    const cost = row.fresh ? (row.costUsd ?? s.costUsd) : Math.max(row.costUsd ?? 0, s.costUsd ?? 0) || undefined;
     return {
       ...s,
       turns: Math.max(row.turns, s.turns),
-      costUsd: row.costUsd ?? s.costUsd,
+      costUsd: cost,
       preview: row.preview ?? s.preview,
     };
   }
@@ -152,7 +154,7 @@ export class Registry {
   private scheduleRefine(sessions: SessionSummary[]): void {
     for (const s of sessions) {
       if (s.sizeBytes < REFINE_MIN_BYTES) continue;
-      if (this.db.getRefined(s.id, s.sizeBytes, s.mtime)) continue;
+      if (this.db.getRefined(s.id, s.sizeBytes, s.mtime)?.fresh) continue;
       if (this.refining.has(s.id)) continue;
       if (!this.refineQueue.some((q) => q.id === s.id)) this.refineQueue.push(s);
     }

@@ -5,6 +5,7 @@ import type {
   EventWindow,
   Me,
   ModelInfo,
+  SearchResult,
   PermissionMode,
   RunInfo,
   SessionSummary,
@@ -69,7 +70,13 @@ export const api = {
     );
   },
   session: (id: string) =>
-    request<{ session: SessionSummary; run?: RunInfo; canRun: boolean; shells?: { kind: 'agent' | 'shell' }[] }>(
+    request<{
+      session: SessionSummary;
+      run?: RunInfo;
+      canRun: boolean;
+      canResumeInTerminal?: boolean;
+      shells?: { kind: 'agent' | 'shell' }[];
+    }>(
       `/api/sessions/${encodeURIComponent(id)}`,
     ),
   events: (id: string, before?: number) => {
@@ -77,6 +84,14 @@ export const api = {
     return request<EventWindow>(`/api/sessions/${encodeURIComponent(id)}/events${qs}`);
   },
 
+  /** 跳转：窗口以 at 所在的那一行结尾 */
+  eventsThrough: (id: string, at: number) =>
+    request<EventWindow>(`/api/sessions/${encodeURIComponent(id)}/events?through=${at}`),
+  search: (q: string, agent?: string, signal?: AbortSignal) => {
+    const p = new URLSearchParams({ q });
+    if (agent) p.set('agent', agent);
+    return request<SearchResult>(`/api/search?${p}`, { signal });
+  },
   /** 增量：从字节游标 after 读到文件末尾 */
   eventsAfter: (id: string, after: number) =>
     request<EventWindow>(`/api/sessions/${encodeURIComponent(id)}/events?after=${after}`),

@@ -177,6 +177,9 @@ importers:
       '@agentctl/adapter-dsh':
         specifier: workspace:*
         version: link:../../packages/adapter-dsh
+      '@agentctl/adapter-pi':
+        specifier: workspace:*
+        version: link:../../packages/adapter-pi
       '@agentctl/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -276,6 +279,22 @@ importers:
         version: 5.9.3
 
   packages/adapter-dsh:
+    dependencies:
+      '@agentctl/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.20.5
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/adapter-pi:
     dependencies:
       '@agentctl/core':
         specifier: workspace:*

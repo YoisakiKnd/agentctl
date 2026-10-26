@@ -1,6 +1,6 @@
 {
   "name": "@agentctl/server",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -13,6 +13,7 @@
     "@agentctl/adapter-claude": "workspace:*",
     "@agentctl/adapter-codex": "workspace:*",
     "@agentctl/adapter-dsh": "workspace:*",
+    "@agentctl/adapter-pi": "workspace:*",
     "@agentctl/core": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/static": "^8.2.0",

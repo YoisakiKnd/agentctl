@@ -388,10 +388,13 @@ export default function Timeline({
   events,
   onDecide,
   draft,
+  highlight,
 }: {
   events: UnifiedEvent[];
   onDecide?: DecideFn;
   draft?: Draft | null;
+  /** 搜索跳转：这一行（偏移）上的事件高亮 */
+  highlight?: number;
 }) {
   const usage = collectUsage(events);
   const newestTurn = events.length > 0 ? events[events.length - 1].turn : -1;
@@ -420,7 +423,7 @@ export default function Timeline({
                 {usage.has(ev.turn) ? <UsageLine u={usage.get(ev.turn)!} /> : null}
               </div>
             ) : null}
-            <div className={`ev ev--${ev.item.kind}`}>
+            <div className={`ev ev--${ev.item.kind}${ev.seq === highlight ? ' is-hit' : ''}`} data-seq={ev.seq}>
               <div className="ev__gutter num">{showClock ? clock : ''}</div>
               <div className="ev__body">{renderItem(ev.item, onDecide)}</div>
             </div>
