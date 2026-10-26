@@ -2028,3 +2028,43 @@ span.nav {
 .sess--sub .sess__preview {
   color: var(--text-faint);
 }
+
+/* ── Markdown 表格与分隔线：只有细线，没有底色斑马纹 ───────────── */
+
+.md-table {
+  overflow-x: auto;
+  margin: 10px 0;
+  max-width: 100%;
+}
+
+.md table {
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.md th,
+.md td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 5px 14px 5px 0;
+  vertical-align: top;
+  text-align: left;
+}
+
+.md th {
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom-color: var(--line);
+  white-space: nowrap;
+}
+
+.md tr:last-child td {
+  border-bottom: 0;
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}

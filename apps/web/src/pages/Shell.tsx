@@ -180,9 +180,11 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
         </a>
         <span className="term__title">{title || '终端'}</span>
         <nav className="term__tabs">
-          <a className={`term__tab${kind === 'agent' ? ' is-on' : ''}`} href={shellHref(id, 'agent')}>
-            {AGENT_LABEL[id.split(':')[0] as AgentId] ?? 'Agent'}
-          </a>
+          {id.startsWith('dsh:') ? null : (
+            <a className={`term__tab${kind === 'agent' ? ' is-on' : ''}`} href={shellHref(id, 'agent')}>
+              {AGENT_LABEL[id.split(':')[0] as AgentId] ?? 'Agent'}
+            </a>
+          )}
           <a className={`term__tab${kind === 'shell' ? ' is-on' : ''}`} href={shellHref(id, 'shell')}>
             Shell
           </a>

@@ -137,7 +137,7 @@ export type LiveMessage =
   | { type: 'delta'; block: 'text' | 'thinking'; text: string }
   | { type: 'delta_reset' }
   | { type: 'state'; state: RunState; sessionId?: string; error?: string; exitCode?: number | null }
-  | { type: 'config'; model?: string; permissionMode?: PermissionMode };
+  | { type: 'config'; model?: string; permissionMode?: PermissionMode; models?: ModelInfo[] };
 
 export interface Me {
   authRequired: boolean;

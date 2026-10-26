@@ -90,7 +90,7 @@ export default function Settings({
       <section className="section">
         <div className="section__head">
           <h2 className="section__title">Agent 适配器</h2>
-          <span className="section__hint">Claude Code 可回放与实时运行；Codex 可回放、可在网页终端续接；其余按里程碑推进</span>
+          <span className="section__hint">Claude Code、Codex、DeepSeek Harness 都可回放与实时运行；Pi / Cursor 待接入</span>
         </div>
         {agents.map((a) => (
           <div className="agent" key={a.id}>

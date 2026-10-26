@@ -401,4 +401,21 @@ M1 剩余：partial 输出在打断时的保留。
 - **模型 / 权限按轮生效**：app-server 没有"改线程设置"的接口，但 `turn/start` 接受 `model`、`approvalPolicy`、`sandboxPolicy` 覆盖，切换后从下一轮起生效。
 - **本机 bubblewrap 不可用**：Codex 的 workspace-write 沙箱在这台机器上建不了 user namespace，部分命令会在沙箱里失败后转为请求授权。这是 Codex 自身与宿主环境的问题，TUI 里一样。
 
-下一步：M3 DSH（zstd 增量解压 + `--profile sdk`）。
+---
+
+## 15. 0.4.0：M3 DeepSeek Harness
+
+| 项 | 实测 |
+|---|---|
+| zstd 帧切分 + 逐帧解压，31 个文件 / 152MB 原文 | 与 `zstd -dc` 逐字节一致 |
+| 首次全量摘要（23 个非空会话 + 7 个子代理） | ≈1.5s，之后只解新帧 |
+| 最大会话（25MB 原文）首屏 | 解压 164ms + 解析 ≈200ms，之后走 LRU |
+| 实时：新建 → 执行 → 切模型 → 续问 → 打断 | 4 秒内打断生效；刷新无重复 |
+
+与原计划的偏差：
+
+- **不用 `--profile sdk`**：它只能新建会话（续接报 already exists），没有取消，服务端也从不发审批请求。改用 `--profile acp`，它有 `session/resume` 与 `session/cancel`。
+- **Node 的 zstd 不支持多帧**（原计划写的"createZstdDecompress 支持多 frame 拼接"不成立：第二帧报 Unknown frame descriptor），改为自己切帧。
+- **没有 TUI 续接**：这台机器只装了 web 配置，没有 tui，DSH 会话的终端只给普通 shell。
+
+下一步：M4（全文搜索、Claude 的 Edit/Write 显示为 diff、用量统计、Pi / Cursor）。

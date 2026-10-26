@@ -7,7 +7,7 @@
 
 ## 现在能做什么
 
-- **在网页里跑 Claude Code 和 Codex**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
+- **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **会话看板**：按项目分组，显示标题、首条提问、轮数、花费、体积、最近活动时间；搜索标题/路径/首条消息；侧脊按 agent 过滤。
@@ -42,6 +42,7 @@ pnpm start                # http://127.0.0.1:8787
 pnpm smoke                # 解析器冒烟：发现耗时、最大会话首屏、向前翻页、refine
 pnpm smoke:live           # 实时运行冒烟：真的跑一次 claude（haiku，约 $0.003）走完审批与续问
 pnpm smoke:codex          # Codex 解析冒烟：发现、每个会话首屏、uid 唯一性、轮次
+pnpm smoke:dsh            # DSH 解析冒烟（zstd 多帧解压 + 解析）
 pnpm typecheck            # 四个包的 tsc --noEmit
 pnpm status               # 看配置、监听地址、是否已设密码
 ```
@@ -71,7 +72,7 @@ pnpm service:install                             # 构建前端 + 装成 systemd
 | `password` | — | `pnpm passwd` 写入的 scrypt 哈希 |
 | `allowedRoots` | `[]` | 网页端可作为工作目录的路径白名单，空表示不限 |
 | `allowBypassPermissions` | `true` | 设为 `false` 后网页端不提供「跳过所有权限」 |
-| `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex`） |
+| `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex` / `dsh`） |
 | `cookieSecure` | `false` | 放在 HTTPS 反代后面时打开 |
 | `tls.cert` / `tls.key` | — | 直接以 HTTPS 提供服务 |
 
@@ -126,6 +127,14 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - **实时**：一个会话一个 `codex app-server` 进程，`thread/start` / `thread/resume` + 每条消息一个 `turn/start`。实时 item 归一成文件格式后走同一个解析器，uid 与磁盘一致。
 - **权限模式**映射为 Codex 的审批策略 + 沙箱：逐个审批 = untrusted + workspace-write，Auto = on-request + workspace-write，只读 = on-request + read-only，跳过所有权限 = never + danger-full-access；运行中切换从下一轮生效。
 
+## DSH 怎么接的
+
+- **zstd 多帧**：DSH 每追加一批记录写一帧。Node 自带的 zstd 只解第一帧，所以 `packages/core/src/zstd.ts` 按 RFC 8878 自己走帧头和块头，把每一帧切出来单独解压，并记下"已完整解出的压缩字节数"——文件追加后只解新帧，尾部写了一半的帧下次再读。31 个文件与系统 `zstd -dc` 逐字节一致。
+- **内存**：全部会话解压后约 150MB，所以列表摘要只保留增量状态、不留原文；打开的会话进 128MB 的 LRU。
+- **回放**：每条记录自带绝对轮号和单调 `seq`（直接当 uid）；`user/message` 只有 `source.kind = user` 才是人说的话，其余注入上下文（记忆、任务提醒、运行时快照……）不上时间线，后台任务结果、子代理来信等渲染成提示。
+- **实时**：`--profile sdk` 只能新建会话、没有取消，所以走 `--profile acp`（`session/new`、`session/resume`、`session/cancel`、`session/set_config_option`）。ACP 推送的不是会话文件里的记录，只用来做草稿、审批和状态；时间线全部来自文件增量追尾（运行中每秒一次），实时与回放天然一致。
+- 模型列表由 ACP 在建立会话后给出（不同于 web 配置里的自定义 provider，acp 配置用的是 deepseek-official）；DSH 的 ACP 没有暴露权限模式，网页上不提供切换。
+
 ## 隐私边界
 
 - 回放只读 agent 的会话文件（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`、`~/.pi/agent/sessions`），不写、不移动、不删除；实时运行时由 agent 自己写盘。
@@ -136,9 +145,10 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 ## 仓库结构
 
 ```
-packages/core              统一事件模型、按字节窗口的读行工具、文本裁剪、AgentAdapter 接口
+packages/core              统一事件模型、按字节窗口的读行工具、zstd 多帧解压、stdio JSON-RPC、AgentAdapter 接口
 packages/adapter-claude    Claude Code 适配器：discover / replay / refine（index.ts）、行解析（parse.ts）、实时运行（live.ts）
 packages/adapter-codex     Codex 适配器：同上结构；实时运行走 codex app-server
+packages/adapter-dsh       DeepSeek Harness 适配器：zstd 增量解压回放；实时运行走 dsh --profile acp
 apps/server                Fastify：配置、鉴权、SQLite 索引、扫描缓存、运行进程表（runs.ts）、REST + SSE、静态托管
 apps/web                   React + Vite：看板、时间线、composer、审批、新会话、设置、登录
 docs/PLAN.md               技术方案（勘察数据、架构、里程碑、风险）
@@ -171,7 +181,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 |---|---|---|
 | Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 打断 + Shell 模式 |
 | Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答、打断、运行中切模型 / 权限 + Shell 模式 |
-| DSH | 计划 M3（zstd 增量解压 + `--profile sdk`） | 计划 M3 |
+| DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、打断、运行中切模型（网页终端只提供普通 shell） |
 | Pi / Cursor | 计划 M4 | 计划 M4 |
 
 新增一个 agent = 实现一个 `AgentAdapter`（`discover` / `replay` / 可选 `refine`、`run`），注册到 `apps/server/src/index.ts` 的 adapters 数组即可。

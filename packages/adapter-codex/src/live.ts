@@ -7,10 +7,9 @@
  * 进程只是驱动，真相仍是 Codex 写的 rollout 文件：实时 item 归一成文件格式后走同一个 parseLine，
  * uid 与磁盘回放一致。用量、本轮耗时这些文件里也会有的东西不从实时流发，免得重复。
  */
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import {
   oneLine,
+  spawnJsonRpc,
   type ApprovalDecision,
   type ModelInfo,
   type PermissionMode,
@@ -26,7 +25,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.3.0' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.4.0' };
 
 /** 网页的权限模式 → Codex 的审批策略 + 沙箱。没有 acceptEdits 的对应物，按 auto 处理 */
 const POLICY: Record<PermissionMode, { approval: string; sandbox: string; sandboxPolicy: Rec }> = {
@@ -50,76 +49,8 @@ interface Pending {
   questionIds?: Map<string, string>;
 }
 
-/** 起一个 app-server 子进程并提供最小的 JSON-RPC 客户端 */
-function rpcProcess(binary: string | undefined, cwd: string | undefined) {
-  const child = spawn(binary ?? 'codex', ['app-server'], { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
-  let nextId = 1;
-  const waiters = new Map<number, { resolve: (v: Rec) => void; reject: (e: Error) => void }>();
-  let onNotify: (method: string, params: Rec) => void = () => undefined;
-  let onRequest: (id: number | string, method: string, params: Rec) => void = () => undefined;
-
-  const write = (obj: Rec) => {
-    if (!child.stdin.writable) throw new Error('agent 进程已退出');
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...obj })}\n`);
-  };
-
-  createInterface({ input: child.stdout }).on('line', (text) => {
-    let d: Rec;
-    try {
-      d = JSON.parse(text) as Rec;
-    } catch {
-      return;
-    }
-    const method = typeof d.method === 'string' ? d.method : undefined;
-    if (method && d.id !== undefined) onRequest(d.id as number | string, method, (d.params ?? {}) as Rec);
-    else if (method) onNotify(method, (d.params ?? {}) as Rec);
-    else if (typeof d.id === 'number' && waiters.has(d.id)) {
-      const w = waiters.get(d.id)!;
-      waiters.delete(d.id);
-      const err = d.error as { message?: string } | undefined;
-      if (err) w.reject(new Error(err.message ?? 'app-server 请求失败'));
-      else w.resolve((d.result ?? {}) as Rec);
-    }
-  });
-
-  return {
-    child,
-    request(method: string, params: Rec): Promise<Rec> {
-      const id = nextId++;
-      return new Promise((resolve, reject) => {
-        waiters.set(id, { resolve, reject });
-        try {
-          write({ id, method, params });
-        } catch (err) {
-          waiters.delete(id);
-          reject(err as Error);
-        }
-      });
-    },
-    notify(method: string, params?: Rec) {
-      write(params ? { method, params } : { method });
-    },
-    reply(id: number | string, result: Rec) {
-      write({ id, result });
-    },
-    replyError(id: number | string, message: string) {
-      write({ id, error: { code: -32601, message } });
-    },
-    rejectAll(err: Error) {
-      for (const w of waiters.values()) w.reject(err);
-      waiters.clear();
-    },
-    set onNotification(fn: (method: string, params: Rec) => void) {
-      onNotify = fn;
-    },
-    set onServerRequest(fn: (id: number | string, method: string, params: Rec) => void) {
-      onRequest = fn;
-    },
-  };
-}
-
 export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
-  const rpc = rpcProcess(req.binary, req.cwd);
+  const rpc = spawnJsonRpc(req.binary ?? 'codex', ['app-server'], req.cwd);
   const { child } = rpc;
 
   let sessionId = req.resumeSessionId ?? '';
@@ -338,7 +269,6 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       exited = true;
       clearTimeout(idleTimer);
       for (const key of [...pending.keys()]) resolveApproval(key, false);
-      rpc.rejectAll(new Error('agent 进程已退出'));
       // app-server 的 stderr 里常驻沙箱警告之类的日志，只有异常退出才拿来当原因
       const reason = spawnError?.message ?? (code ? oneLine(stderrTail.replace(/\x1b\[[0-9;]*m/g, ''), 400) : '');
       if (reason) sink({ type: 'event', event: transient({ kind: 'notice', level: 'error', code: 'exit', text: `进程退出：${reason}` }, `exit:${seq}`) });
@@ -436,7 +366,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
 
 /** 起一个 app-server，只做握手 + model/list 就退出。不发消息、不花钱 */
 export async function probeCodexModels(binary?: string, timeoutMs = 20_000): Promise<ModelInfo[]> {
-  const rpc = rpcProcess(binary, undefined);
+  const rpc = spawnJsonRpc(binary ?? 'codex', ['app-server']);
   const timer = setTimeout(() => rpc.child.kill(), timeoutMs);
   try {
     await rpc.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null });

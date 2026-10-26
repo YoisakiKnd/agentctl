@@ -51,6 +51,11 @@ export interface AgentAdapter {
    * 会话页靠它增量追新内容——不管会话是网页里跑的还是终端里跑的。
    */
   replayAfter?(session: SessionSummary, after: number, maxBytes?: number): Promise<EventWindow>;
+  /**
+   * 可选：replay 游标所在坐标系里的内容总长。缺省就是文件字节数；
+   * 压缩存储的会话（DSH）游标是解压后的偏移，必须实现它。
+   */
+  contentLength?(session: SessionSummary): Promise<number>;
   /** 可选：在真终端里续接这个会话的参数（Shell 模式用），例如 claude 是 ['--resume', id] */
   resumeArgs?(session: SessionSummary): string[];
   /** 可选：该 agent 命令行当前能用的模型（与终端里 /model 看到的一致） */
@@ -111,7 +116,13 @@ export type LiveMessage =
   | { type: 'delta_reset' }
   | { type: 'state'; state: RunState; sessionId?: string; error?: string; exitCode?: number | null }
   /** 进程当前生效的配置（启动时、运行中切换后各推一次） */
-  | { type: 'config'; model?: string; permissionMode?: PermissionMode };
+  | {
+      type: 'config';
+      model?: string;
+      permissionMode?: PermissionMode;
+      /** 进程自己报的可选模型（DSH 的 ACP 只在建立会话后才给），网页用它替换静态列表 */
+      models?: ModelInfo[];
+    };
 
 export type RunSink = (msg: LiveMessage) => void;
 

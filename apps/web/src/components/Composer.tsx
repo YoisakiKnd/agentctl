@@ -19,6 +19,9 @@ const MODES: ModeOption[] = [
   { value: 'bypassPermissions', label: '跳过所有权限', hint: '不再询问任何操作，agent 可以直接执行任意命令' },
 ];
 
+/** DSH 的 ACP 没有暴露权限模式：沿用 DSH 自己的权限预设，网页上不提供切换 */
+const NO_MODES: ModeOption[] = [];
+
 /** Codex 没有"只自动接受编辑"这一档；plan 对应只读沙箱 */
 const CODEX_MODES: ModeOption[] = [
   { value: 'default', label: '逐个审批', hint: '除只读的安全命令外都要你确认（untrusted）' },
@@ -28,6 +31,7 @@ const CODEX_MODES: ModeOption[] = [
 ];
 
 export function modesFor(agent: AgentId): ModeOption[] {
+  if (agent === 'dsh') return NO_MODES;
   return agent === 'codex' ? CODEX_MODES : MODES;
 }
 
@@ -48,6 +52,7 @@ export function PermissionSelect({
 }) {
   const allowBypass = useAllowBypass();
   const modes = modesFor(agent);
+  if (modes.length === 0) return null;
   const mode = modes.find((m) => m.value === value) ?? modes[0];
   return (
     <select
@@ -82,13 +87,17 @@ export function ModelSelect({
   value,
   onChange,
   disabled,
+  options,
 }: {
   agent: AgentId;
+  /** 运行中的进程自己报的模型列表，优先于静态列表 */
+  options?: ModelInfo[] | null;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
 }) {
-  const models = useModels(agent);
+  const fetched = useModels(agent);
+  const models = options?.length ? options : fetched;
   const option = (m: ModelInfo) => (
     <option key={m.value} value={m.value} title={[m.description, m.resolvedModel].filter(Boolean).join(' · ')}>
       {modelLabel(m, models)}
@@ -183,6 +192,7 @@ export default function Composer({
   runModel,
   onSetModel,
   runPermissionMode,
+  runModels,
   onSetPermissionMode,
   warning,
 }: {
@@ -198,6 +208,7 @@ export default function Composer({
   runModel?: string;
   onSetModel?: (model: string) => Promise<void>;
   runPermissionMode?: PermissionMode;
+  runModels?: ModelInfo[] | null;
   onSetPermissionMode?: (mode: PermissionMode) => Promise<void>;
   /** 输入框上方的提醒（例如会话可能正在终端里使用） */
   warning?: string;
@@ -240,7 +251,7 @@ export default function Composer({
     ? working
       ? '继续输入会排在当前这一轮之后'
       : '继续对话'
-    : `发送消息，会在同一会话上续接（${agent === 'codex' ? 'codex resume' : 'claude --resume'}）`;
+    : `发送消息，会在同一会话上续接（${agent === 'codex' ? 'codex resume' : agent === 'dsh' ? 'DSH 会话恢复' : 'claude --resume'}）`;
 
   return (
     <footer className="composer">
@@ -281,6 +292,7 @@ export default function Composer({
               {onSetModel ? (
                 <ModelSelect
                   agent={agent}
+                  options={runModels}
                   value={runModel ?? 'default'}
                   disabled={switching}
                   onChange={(m) => {

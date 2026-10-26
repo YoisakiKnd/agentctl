@@ -4,7 +4,7 @@ export type Route =
   | { name: 'dashboard' }
   | { name: 'session'; id: string }
   | { name: 'shell'; id: string; kind: 'agent' | 'shell' }
-  | { name: 'new'; cwd?: string; agent?: 'claude' | 'codex' }
+  | { name: 'new'; cwd?: string; agent?: 'claude' | 'codex' | 'dsh' }
   | { name: 'settings' }
   | { name: 'login' };
 
@@ -14,7 +14,7 @@ export function parseHash(hash: string): Route {
   if (path === '/new') {
     const q = new URLSearchParams(query);
     const agent = q.get('agent');
-    return { name: 'new', cwd: q.get('cwd') ?? undefined, agent: agent === 'codex' || agent === 'claude' ? agent : undefined };
+    return { name: 'new', cwd: q.get('cwd') ?? undefined, agent: agent === 'codex' || agent === 'claude' || agent === 'dsh' ? agent : undefined };
   }
   if (path === '/settings') return { name: 'settings' };
   if (path === '/login') return { name: 'login' };

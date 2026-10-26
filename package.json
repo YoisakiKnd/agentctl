@@ -1,6 +1,6 @@
 {
   "name": "agentctl",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -21,6 +21,7 @@
     "smoke:live": "pnpm --filter @agentctl/adapter-claude live-smoke",
     "service:install": "bash scripts/install-service.sh",
     "service:uninstall": "bash scripts/install-service.sh --uninstall",
-    "smoke:codex": "pnpm --filter @agentctl/adapter-codex smoke"
+    "smoke:codex": "pnpm --filter @agentctl/adapter-codex smoke",
+    "smoke:dsh": "pnpm --filter @agentctl/adapter-dsh smoke"
   }
 }

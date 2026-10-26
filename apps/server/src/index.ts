@@ -8,6 +8,7 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { ClaudeAdapter } from '@agentctl/adapter-claude';
 import { CodexAdapter } from '@agentctl/adapter-codex';
+import { DshAdapter } from '@agentctl/adapter-dsh';
 import type { AgentAdapter } from '@agentctl/core';
 import { CONFIG_PATH, expandHome, isLoopback, loadConfig, saveConfig, DB_PATH } from './config.ts';
 import { hashPassword, LoginThrottle } from './auth.ts';
@@ -17,7 +18,7 @@ import { registerRoutes } from './routes.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 interface ServeOptions {
   host?: string;
@@ -89,7 +90,7 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
   }
 
   // 新增 agent：在这里加一个实现即可；config.yaml 里 agents.<id>.enabled: false 可以关掉
-  const adapters: AgentAdapter[] = [new ClaudeAdapter(), new CodexAdapter()].filter(
+  const adapters: AgentAdapter[] = [new ClaudeAdapter(), new CodexAdapter(), new DshAdapter()].filter(
     (a) => cfg.agents[a.id]?.enabled !== false,
   );
   const db = new IndexDb(DB_PATH);

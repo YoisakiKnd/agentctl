@@ -185,13 +185,14 @@ export default function Session({ id }: { id: string }) {
     const tick = () => {
       if (document.visibilityState === 'visible' && anchored.current) void pollTail();
     };
-    const timer = setInterval(tick, 2000);
+    // 有我们起的进程在跑时加快到 1 秒：DSH 的时间线完全靠追文件
+    const timer = setInterval(tick, processAlive ? 1000 : 2000);
     document.addEventListener('visibilitychange', tick);
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [pollTail]);
+  }, [pollTail, processAlive]);
 
   // 侧栏会话列表与运行标记：15 秒刷新一次
   useEffect(() => {
@@ -407,7 +408,8 @@ export default function Session({ id }: { id: string }) {
           {session ? (
             <a
               className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}
-              href={shellHref(id)}
+              // DSH 没有可续接的 TUI，直接给会话目录里的 shell
+              href={shellHref(id, session.agent === 'dsh' ? 'shell' : 'agent')}
               title="打开真终端：在网页里续接这个会话（claude --resume / codex resume），或在会话目录开 shell"
             >
               {agentShell ? <span className="live-dot" aria-hidden="true" /> : null}
@@ -466,7 +468,8 @@ export default function Session({ id }: { id: string }) {
             onSend={send}
             onInterrupt={runId ? () => api.interrupt(runId).then(() => undefined) : undefined}
             onStop={runId ? () => api.stop(runId).then(() => undefined) : undefined}
-            runModel={runModel}
+            runModel={live.model ?? runModel}
+            runModels={live.models}
             onSetModel={runId ? setModel : undefined}
             runPermissionMode={live.permissionMode ?? undefined}
             onSetPermissionMode={runId ? setPermissionMode : undefined}

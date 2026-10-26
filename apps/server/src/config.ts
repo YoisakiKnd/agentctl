@@ -52,6 +52,7 @@ function defaults(): Config {
     agents: {
       claude: { enabled: true },
       codex: { enabled: true },
+      dsh: { enabled: true },
     },
   };
 }

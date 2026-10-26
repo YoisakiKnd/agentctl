@@ -2,7 +2,7 @@ import { Fragment } from 'react';
 
 /**
  * 极简 Markdown：只覆盖 agent 回复里真正会出现的语法（标题、围栏代码、
- * 列表、引用、行内代码、粗斜体、链接）。全部用 React 元素拼装，不碰
+ * 列表、引用、表格、分隔线、行内代码、粗斜体、链接）。全部用 React 元素拼装，不碰
  * innerHTML，所以会话内容里的 HTML 永远不会被执行。
  */
 
@@ -11,13 +11,32 @@ type Block =
   | { t: 'h'; level: number; text: string }
   | { t: 'code'; lang: string; text: string }
   | { t: 'list'; ordered: boolean; items: string[] }
-  | { t: 'quote'; lines: string[] };
+  | { t: 'quote'; lines: string[] }
+  | { t: 'table'; align: Align[]; head: string[]; rows: string[][] }
+  | { t: 'hr' };
+
+type Align = 'left' | 'center' | 'right' | undefined;
 
 const FENCE = /^\s*```(\S*)\s*$/;
 const HEADING = /^(#{1,4})\s+(.*)$/;
 const UL = /^\s*[-*+]\s+(.*)$/;
 const OL = /^\s*(\d{1,3})[.)]\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
+const HR = /^\s*([-*_])(\s*\1){2,}\s*$/;
+const TABLE_ROW = /^\s*\|.*\|\s*$|^[^|`]*\|[^|]*/;
+const TABLE_DELIM = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+/** 按未转义的 | 切单元格；行首尾的 | 可有可无 */
+function cells(row: string): string[] {
+  const parts = row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/);
+  return parts.map((c) => c.trim().replace(/\\\|/g, '|'));
+}
+
+function isTableStart(lines: string[], i: number): boolean {
+  if (!TABLE_ROW.test(lines[i]) || i + 1 >= lines.length || !TABLE_DELIM.test(lines[i + 1])) return false;
+  // 「一行带 | 的普通文字 + 下面一条 ---」是分隔线，不是表格
+  return lines[i + 1].includes('|') || lines[i].trim().startsWith('|');
+}
 
 function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n?/g, '\n').split('\n');
@@ -42,6 +61,27 @@ function parseBlocks(src: string): Block[] {
     }
 
     if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+
+    if (isTableStart(lines, i)) {
+      const head = cells(line);
+      const align: Align[] = cells(lines[i + 1]).map((c) =>
+        c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : undefined,
+      );
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        rows.push(cells(lines[i]));
+        i += 1;
+      }
+      blocks.push({ t: 'table', align, head, rows });
+      continue;
+    }
+
+    if (HR.test(line)) {
+      blocks.push({ t: 'hr' });
       i += 1;
       continue;
     }
@@ -91,6 +131,8 @@ function parseBlocks(src: string): Block[] {
       const cur = lines[i];
       if (
         !cur.trim() ||
+        isTableStart(lines, i) ||
+        HR.test(cur) ||
         FENCE.test(cur) ||
         HEADING.test(cur) ||
         QUOTE.test(cur) ||
@@ -188,6 +230,35 @@ export default function Markdown({ text }: { text: string }) {
           }
           case 'quote':
             return <blockquote key={key}>{inline(b.lines.join('\n'), key)}</blockquote>;
+          case 'hr':
+            return <hr key={key} />;
+          case 'table':
+            return (
+              <div className="md-table" key={key}>
+                <table>
+                  <thead>
+                    <tr>
+                      {b.head.map((c, j) => (
+                        <th key={j} style={{ textAlign: b.align[j] }}>
+                          {inline(c, `${key}-h${j}`)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((r, ri) => (
+                      <tr key={ri}>
+                        {b.head.map((_, j) => (
+                          <td key={j} style={{ textAlign: b.align[j] }}>
+                            {inline(r[j] ?? '', `${key}-${ri}-${j}`)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           default:
             return <p key={key}>{inline(b.lines.join('\n'), key)}</p>;
         }

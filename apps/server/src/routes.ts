@@ -30,8 +30,12 @@ const OPEN = new Set(['/api/health', '/api/auth/login', '/api/auth/me']);
 
 const PERMISSION_MODES = new Set<PermissionMode>(['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions']);
 const DECISIONS = new Set<ApprovalDecision>(['allow', 'allow_session', 'deny']);
-/** 作为 argv 传给 CLI；不允许以 - 开头，免得被当成参数 */
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._\-[\]]{0,63}$/;
+/**
+ * 模型值只经 argv 数组（不过 shell）或 JSON-RPC 参数传给 agent，所以不必限死字符集
+ * （DSH 的模型值形如 ["deepseek-official","deepseek-flash"]）。要防的只有：
+ * 以 - 开头会被 CLI 当成参数；控制字符与换行不该出现在模型名里。
+ */
+const MODEL_RE = /^[^-\s\p{Cc}][^\p{Cc}]{0,199}$/u;
 const EFFORT_RE = /^[a-z]{2,12}$/;
 const MAX_PROMPT_CHARS = 100_000;
 /** 新会话要等 agent 分配 sessionId 才能跳转到会话页 */
@@ -268,7 +272,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       }
       const adapter = registry.adapter(session.agent);
       if (!adapter?.replayAfter) return reply.code(400).send({ error: '该 agent 不支持增量读取' });
-      const size = (await stat(session.file)).size;
+      const size = adapter.contentLength ? await adapter.contentLength(session) : (await stat(session.file)).size;
       if (size < after) return reply.code(409).send({ error: '会话文件被截断或替换，请刷新页面' });
       if (size === after) return { ...EMPTY_WINDOW, window: { start: after, end: after } };
       return adapter.replayAfter(session, after);

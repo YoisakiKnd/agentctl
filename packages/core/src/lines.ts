@@ -143,3 +143,45 @@ export function safeJsonParse(text: string): unknown | null {
     return null;
   }
 }
+
+/**
+ * 内存里已解压内容的按行窗口（DSH 这类压缩会话用）。语义与 readLinesBefore 一致：
+ * 返回 [end - maxBytes, end) 内的完整行，start 永远落在行首；单行比预算还大时把窗口扩到这一行。
+ */
+export function bufferLinesBefore(buf: Buffer, end: number, maxBytes = DEFAULT_CHUNK): LineWindow {
+  const stop = Math.min(Math.max(end, 0), buf.length);
+  let from = Math.max(0, stop - maxBytes);
+  if (from > 0) {
+    const nl = buf.indexOf(0x0a, from - 1);
+    if (nl === -1 || nl >= stop) {
+      // 窗口里没有行首：往前找到这一行的开头
+      const prev = buf.lastIndexOf(0x0a, from - 1);
+      from = prev + 1;
+    } else {
+      from = nl + 1;
+    }
+  }
+  return { ...splitLines(buf, from, stop), start: from, end: stop, hasMore: from > 0 };
+}
+
+/** 从 start（行首）向后读最多 maxBytes 的完整行；末尾没换行的残行不返回 */
+export function bufferLinesFrom(buf: Buffer, start = 0, maxBytes = 256 * 1024): LineWindow {
+  const from = Math.min(Math.max(start, 0), buf.length);
+  let stop = Math.min(buf.length, from + maxBytes);
+  // 停在最后一个换行之后，不切断行
+  const nl = buf.lastIndexOf(0x0a, stop - 1);
+  stop = nl >= from ? nl + 1 : from;
+  return { ...splitLines(buf, from, stop), start: from, end: stop, hasMore: stop < buf.length };
+}
+
+function splitLines(buf: Buffer, from: number, stop: number): { lines: Line[] } {
+  const lines: Line[] = [];
+  let p = from;
+  while (p < stop) {
+    const nl = buf.indexOf(0x0a, p);
+    if (nl === -1 || nl >= stop) break;
+    if (nl > p) lines.push({ text: buf.toString('utf8', p, nl), offset: p });
+    p = nl + 1;
+  }
+  return { lines };
+}
