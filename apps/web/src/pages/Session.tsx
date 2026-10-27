@@ -344,6 +344,8 @@ export default function Session({ id, at }: { id: string; at?: number }) {
     async (effort: string) => {
       if (!runId) return;
       await api.setEffort(runId, effort);
+      // Claude 的进程不会报强度，页面上以记下的为准
+      setPrefs((cur) => ({ ...cur, effort: effort || undefined }));
     },
     [runId],
   );
@@ -508,8 +510,9 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             warning={warning}
             notice={<QuotaAlert agent={session.agent} />}
             initialOpts={prefs}
-            runEffort={live.effort}
-            onSetEffort={runId && session.agent === 'dsh' ? setEffort : undefined}
+            runEffort={live.effort ?? prefs?.effort ?? null}
+            effortPending={session.agent === 'claude'}
+            onSetEffort={runId ? setEffort : undefined}
           />
         ) : session ? (
           <footer className="readonly">

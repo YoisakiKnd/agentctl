@@ -132,7 +132,7 @@ export const api = {
       body: JSON.stringify({ requestId, decision, answers }),
     }),
   setEffort: (runId: string, effort: string) =>
-    request<{ effort: string }>(`/api/runs/${runId}/effort`, { method: 'POST', body: JSON.stringify({ effort }) }),
+    request<{ effort: string; pending?: boolean }>(`/api/runs/${runId}/effort`, { method: 'POST', body: JSON.stringify({ effort }) }),
   setPermissionMode: (runId: string, mode: PermissionMode) =>
     request<{ mode: PermissionMode }>(`/api/runs/${runId}/permission-mode`, {
       method: 'POST',

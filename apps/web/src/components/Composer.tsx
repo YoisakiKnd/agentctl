@@ -143,21 +143,28 @@ export function ModelSelect({
   );
 }
 
+/** 某个模型支持的强度；模型没报（或是「默认」）时取列表里第一个有强度的 */
+function effortLevelsOf(models: ModelInfo[], model?: string): string[] {
+  return models.find((m) => m.value === (model ?? 'default'))?.effortLevels ?? models.find((m) => m.effortLevels?.length)?.effortLevels ?? [];
+}
+
 export function EffortSelect({
   levels,
   value,
   onChange,
   disabled,
+  hint,
 }: {
   levels: string[];
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
+  hint?: string;
 }) {
   // 进程报的当前值可能不在列表里（例如换模型后），也要显示出来
   const all = value && !levels.includes(value) ? [...levels, value] : levels;
   return (
-    <select className="select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} aria-label="推理强度" title="推理强度">
+    <select className="select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} aria-label="推理强度" title={hint ?? '推理强度'}>
       <option value="">强度·默认</option>
       {all.map((e) => (
         <option key={e} value={e}>
@@ -231,6 +238,7 @@ export default function Composer({
   initialOpts,
   runEffort,
   onSetEffort,
+  effortPending,
 }: {
   agent: AgentId;
   path: string;
@@ -255,8 +263,11 @@ export default function Composer({
   /** 进程当前的推理强度；有 onSetEffort 时运行中也能切换 */
   runEffort?: string | null;
   onSetEffort?: (effort: string) => Promise<void>;
+  /** 运行中改强度要等下次启动进程才生效（Claude 的 --effort） */
+  effortPending?: boolean;
 }) {
   const [text, setText] = useState('');
+  const fetchedModels = useModels(agent);
   const [opts, setOptsState] = useState<RunOptions>(initialOpts ?? {});
   /** 用户自己动过下拉框之后，就不再被服务端回来的 prefs 覆盖 */
   const touched = useRef(false);
@@ -356,9 +367,10 @@ export default function Composer({
                   ) : null}
                   {onSetEffort ? (
                     <EffortSelect
-                      levels={(runModels ?? []).find((m) => m.value === runModel)?.effortLevels ?? runModels?.[0]?.effortLevels ?? []}
+                      levels={effortLevelsOf(runModels?.length ? runModels : fetchedModels, runModel)}
                       value={runEffort ?? ''}
                       disabled={switching}
+                      hint={effortPending ? '推理强度在启动进程时指定：改了会记下，下次启动进程时生效' : undefined}
                       onChange={(e) => {
                         setSwitching(true);
                         void act(() => onSetEffort(e)).finally(() => setSwitching(false));

@@ -583,15 +583,19 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     return { mode: applied };
   });
 
-  // 运行中切换推理强度（DSH）；空串回到默认
+  // 运行中切换推理强度：DSH、Codex 下一轮生效；Claude 记下来下次启动时生效。空串回到默认
   app.post('/api/runs/:id/effort', async (req, reply) => {
     const run = runs.get((req.params as { id: string }).id);
     if (!run || run.state === 'exited') return reply.code(404).send({ error: '运行不存在或已结束' });
-    if (!run.handle.setEffort) return reply.code(400).send({ error: '该 agent 不支持运行中切换推理强度，下次启动时生效' });
     const raw = (req.body as { effort?: unknown } | undefined)?.effort;
     if (typeof raw !== 'string' || (raw !== '' && !EFFORT_RE.test(raw))) throw new BadRequest('effort 不合法');
-    const effort = await run.handle.setEffort(raw);
     const key = run.info().sessionKey;
+    // Claude 的强度是启动参数（--effort），进程活着时改不了：先记下，下次启动进程时用
+    if (!run.handle.setEffort) {
+      if (key) registry.savePrefs(key, { effort: raw || undefined });
+      return { effort: raw, pending: true };
+    }
+    const effort = await run.handle.setEffort(raw);
     if (key) registry.savePrefs(key, { effort: effort || undefined });
     return { effort };
   });

@@ -316,6 +316,12 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       sink({ type: 'config', model: model ?? 'default' });
       return model;
     },
+    async setEffort(next: string) {
+      // 推理强度和模型一样按轮指定，下一次 turn/start 带上
+      effort = next || undefined;
+      sink({ type: 'config', effort: next });
+      return next;
+    },
     async setPermissionMode(next: PermissionMode) {
       mode = next;
       modeChanged = true;
