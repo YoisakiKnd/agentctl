@@ -68,6 +68,10 @@ export interface SessionSummary {
   preview?: string;
   unknownTypes?: Record<string, number>;
   subagent?: string;
+  pinned?: boolean;
+  tags?: string[];
+  /** 用户改过标题时，agent 自己给的原标题 */
+  originalTitle?: string;
 }
 
 export interface EventWindow {
@@ -168,5 +172,27 @@ export interface SearchResult {
   results: { session: SessionSummary; hits: SearchHit[] }[];
   total: number;
   truncated: boolean;
+  ms: number;
+}
+
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** agent 不记账（Codex、DSH）时没有这个字段 */
+  costUsd?: number;
+  messages: number;
+}
+
+export interface UsageReport {
+  days: string[];
+  from: string | null;
+  to: string;
+  daily: ({ day: string; agent: AgentId } & UsageTotals)[];
+  agents: ({ agent: AgentId; sessions: number } & UsageTotals)[];
+  models: ({ agent: AgentId; model: string } & UsageTotals)[];
+  sessions: ({ id: string; agent: AgentId; title: string; cwd: string; updatedAt: string } & UsageTotals)[];
+  totals: UsageTotals & { sessions: number };
   ms: number;
 }

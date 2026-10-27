@@ -1,8 +1,8 @@
 import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentAdapter, EventWindow, SessionSummary } from '@agentctl/core';
-import type { IndexDb } from './db.ts';
+import type { AgentAdapter, EventWindow, SessionSummary, UsageBucket } from '@agentctl/core';
+import type { Annotation, IndexDb } from './db.ts';
 
 export interface AgentInfo {
   id: string;
@@ -13,6 +13,11 @@ export interface AgentInfo {
   available: boolean;
   capabilities: AgentAdapter['capabilities'];
   sessionCount: number;
+}
+
+export interface SessionUsage {
+  session: SessionSummary;
+  buckets: UsageBucket[];
 }
 
 export interface Stats {
@@ -36,10 +41,13 @@ export class Registry {
   private readonly refineQueue: SessionSummary[] = [];
   private readonly refining = new Set<string>();
   private readonly binaryCache = new Map<string, string | null>();
+  private readonly notes: Map<string, Annotation>;
+  private usageInflight: Promise<SessionUsage[]> | null = null;
 
   constructor(adapters: AgentAdapter[], db: IndexDb) {
     this.adapters = adapters;
     this.db = db;
+    this.notes = db.annotations();
   }
 
   async list(force = false): Promise<SessionSummary[]> {
@@ -56,7 +64,7 @@ export class Registry {
           console.error(`[registry] ${adapter.id} discover 失败:`, (err as Error).message);
         }
       }
-      const merged = all.map((s) => this.applyRefined(s));
+      const merged = all.map((s) => this.annotate(this.applyRefined(s)));
       merged.sort((a, b) => b.mtime - a.mtime);
       this.sessions = merged;
       this.lastRefresh = Date.now();
@@ -127,6 +135,57 @@ export class Registry {
     this.lastRefresh = 0;
   }
 
+  annotation(id: string): Annotation {
+    return this.notes.get(id) ?? { pinned: false, tags: [] };
+  }
+
+  /** 改注解：立刻反映到内存里的列表，不必等下次扫盘 */
+  setAnnotation(id: string, a: Annotation): void {
+    this.db.putAnnotation(id, a);
+    if (a.pinned || a.tags.length || a.title) this.notes.set(id, a);
+    else this.notes.delete(id);
+    const idx = this.sessions.findIndex((s) => s.id === id);
+    if (idx >= 0) this.sessions[idx] = this.annotate(this.sessions[idx]);
+  }
+
+  /** 全部标签及使用次数 */
+  tags(): { tag: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const a of this.notes.values()) for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }
+
+  /**
+   * 每个会话按天 × 模型的用量。文件没变就用缓存；变了的整份重算（Claude 的花费要从头记账才对得上）。
+   * 从旧到新算：正在跑的会话放最后，它还没记账的部分要参考别的会话的单价。
+   */
+  usage(): Promise<SessionUsage[]> {
+    if (this.usageInflight) return this.usageInflight;
+    this.usageInflight = (async () => {
+      const sessions = [...(await this.list())].sort((a, b) => a.mtime - b.mtime);
+      const out: SessionUsage[] = [];
+      for (const session of sessions) {
+        const adapter = this.adapters.find((a) => a.id === session.agent);
+        if (!adapter?.usage || !session.file) continue;
+        let buckets = this.db.getUsage(session.id, session.sizeBytes, session.mtime);
+        if (!buckets) {
+          try {
+            buckets = await adapter.usage(session);
+            this.db.putUsage(session.id, session.sizeBytes, session.mtime, buckets);
+          } catch (err) {
+            console.error(`[registry] usage ${session.id} 失败:`, (err as Error).message);
+            continue;
+          }
+        }
+        if (buckets.length) out.push({ session, buckets });
+      }
+      return out;
+    })().finally(() => {
+      this.usageInflight = null;
+    });
+    return this.usageInflight;
+  }
+
   stats(): Stats {
     return {
       sessions: this.sessions.length,
@@ -134,6 +193,20 @@ export class Registry {
       totalCostUsd: this.sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0),
       totalBytes: this.sessions.reduce((sum, s) => sum + s.sizeBytes, 0),
       latestAt: this.sessions[0]?.updatedAt ?? null,
+    };
+  }
+
+  private annotate(s: SessionSummary): SessionSummary {
+    const a = this.notes.get(s.id);
+    const original = s.originalTitle ?? s.title;
+    const base = { ...s, pinned: undefined, tags: undefined, originalTitle: undefined, title: original };
+    if (!a) return base;
+    return {
+      ...base,
+      pinned: a.pinned || undefined,
+      tags: a.tags.length ? a.tags : undefined,
+      title: a.title ?? original,
+      originalTitle: a.title ? original : undefined,
     };
   }
 
@@ -177,7 +250,7 @@ export class Registry {
         preview: patch.preview ?? next.preview,
       });
       const idx = this.sessions.findIndex((s) => s.id === next.id);
-      if (idx >= 0) this.sessions[idx] = this.applyRefined(this.sessions[idx]);
+      if (idx >= 0) this.sessions[idx] = this.annotate(this.applyRefined(this.sessions[idx]));
     } catch (err) {
       console.error(`[registry] refine ${next.id} 失败:`, (err as Error).message);
     } finally {

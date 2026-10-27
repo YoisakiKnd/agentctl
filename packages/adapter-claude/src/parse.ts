@@ -27,6 +27,8 @@ export interface Facts {
   model?: string;
   turns: number;
   costUsd?: number;
+  /** 最后一行 cost-state 的按模型累计（用量估价参考单价用） */
+  modelUsage?: Record<string, Record<string, unknown>>;
   lastTs?: string;
   preview?: string;
   unknown: Record<string, number>;
@@ -64,6 +66,9 @@ export function harvest(line: Record<string, unknown>, facts: Facts, head: boole
 
   if (type === 'cost-state' && typeof line.totalCostUSD === 'number') {
     facts.costUsd = line.totalCostUSD;
+    if (line.modelUsage && typeof line.modelUsage === 'object') {
+      facts.modelUsage = line.modelUsage as Record<string, Record<string, unknown>>;
+    }
   }
 
   if (type === 'user' && head && !facts.preview && isHumanPrompt(line)) {

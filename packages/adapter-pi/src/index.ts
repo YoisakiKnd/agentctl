@@ -10,6 +10,7 @@ import { basename, join } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import {
   clip,
+  UsageAcc,
   flattenContent,
   oneLine,
   safeJsonParse,
@@ -23,6 +24,7 @@ import {
   type SearchQuery,
   type SessionSummary,
   type UnifiedEvent,
+  type UsageBucket,
 } from '@agentctl/core';
 
 type Rec = Record<string, unknown>;
@@ -32,12 +34,13 @@ interface Entry {
   offset: number;
 }
 
-/** 读整个文件，返回当前分支上的记录（文件顺序）和会话头 */
-async function mainChain(file: string): Promise<{ header?: Rec; chain: Entry[] }> {
+/** 读整个文件，返回当前分支上的记录（文件顺序）、全部记录和会话头 */
+async function mainChain(file: string): Promise<{ header?: Rec; chain: Entry[]; all: Entry[] }> {
   const text = await readFile(file, 'utf8');
   const byId = new Map<string, Entry>();
   let header: Rec | undefined;
   let last: Entry | undefined;
+  const all: Entry[] = [];
   let offset = 0;
   for (const raw of text.split('\n')) {
     const rec = safeJsonParse(raw) as Rec | null;
@@ -46,6 +49,7 @@ async function mainChain(file: string): Promise<{ header?: Rec; chain: Entry[] }
       if (rec.type === 'session') header = rec;
       else if (typeof rec.id === 'string') {
         byId.set(rec.id, e);
+        all.push(e);
         last = e;
       }
     }
@@ -61,7 +65,7 @@ async function mainChain(file: string): Promise<{ header?: Rec; chain: Entry[] }
     const parent = cur.rec.parentId;
     cur = typeof parent === 'string' ? byId.get(parent) : undefined;
   }
-  return { header, chain: chain.reverse() };
+  return { header, chain: chain.reverse(), all };
 }
 
 interface Ctx {
@@ -234,6 +238,15 @@ export class PiAdapter implements AgentAdapter {
     const events = parseChain(chain, { file: session.file, sessionId: session.sessionId, turn: 0 }).filter((e) => e.seq >= after);
     const size = (await stat(session.file)).size;
     return { events, nextBefore: null, hasMore: false, window: { start: after, end: size } };
+  }
+
+  /** 花掉的钱不分分支：回退掉的那些回复也算，所以走全部记录而不是当前分支 */
+  async usage(session: SessionSummary): Promise<UsageBucket[]> {
+    const { all } = await mainChain(session.file);
+    const ctx: Ctx = { file: session.file, sessionId: session.sessionId, turn: 0 };
+    const acc = new UsageAcc();
+    for (const e of all) acc.addEvents(parseEntry(e, ctx));
+    return acc.buckets();
   }
 
   async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {

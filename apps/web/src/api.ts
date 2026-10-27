@@ -10,6 +10,7 @@ import type {
   RunInfo,
   SessionSummary,
   Stats,
+  UsageReport,
 } from './types';
 
 export interface RunOptions {
@@ -95,6 +96,18 @@ export const api = {
   /** 增量：从字节游标 after 读到文件末尾 */
   eventsAfter: (id: string, after: number) =>
     request<EventWindow>(`/api/sessions/${encodeURIComponent(id)}/events?after=${after}`),
+  usage: (days: number, agent?: string) => {
+    const p = new URLSearchParams({ days: String(days) });
+    if (agent) p.set('agent', agent);
+    return request<UsageReport>(`/api/usage?${p}`);
+  },
+  /** 置顶 / 标签 / 改标题；不传的字段不改，title 传空串表示恢复原标题 */
+  annotate: (id: string, patch: { pinned?: boolean; tags?: string[]; title?: string }) =>
+    request<{ session: SessionSummary }>(`/api/sessions/${encodeURIComponent(id)}/annotation`, {
+      method: 'POST',
+      body: JSON.stringify(patch),
+    }),
+  tags: () => request<{ tags: { tag: string; count: number }[] }>('/api/tags'),
   models: (agent: string) => request<{ models: ModelInfo[] }>(`/api/agents/${agent}/models`),
   setModel: (runId: string, model: string) =>
     request<{ model: string; resolved?: string }>(`/api/runs/${runId}/model`, {

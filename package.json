@@ -1,6 +1,6 @@
 {
   "name": "agentctl",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -23,6 +23,7 @@
     "service:uninstall": "bash scripts/install-service.sh --uninstall",
     "smoke:codex": "pnpm --filter @agentctl/adapter-codex smoke",
     "smoke:dsh": "pnpm --filter @agentctl/adapter-dsh smoke",
-    "smoke:pi": "pnpm --filter @agentctl/adapter-pi smoke"
+    "smoke:pi": "pnpm --filter @agentctl/adapter-pi smoke",
+    "smoke:usage": "pnpm --filter @agentctl/adapter-claude usage-smoke"
   }
 }

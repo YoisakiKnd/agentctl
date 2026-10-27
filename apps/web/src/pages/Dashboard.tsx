@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
-import { navigate, newSessionHref, searchHref, sessionHref } from '../router';
+import { navigate, newSessionHref, searchHref, sessionHref, usageHref } from '../router';
 import type { AgentId, RunInfo, SessionSummary, Stats } from '../types';
 import { AGENT_LABEL } from '../types';
 import { formatBytes, formatCost, homeShorten, projectName, timeAgo } from '../format';
@@ -12,7 +12,19 @@ interface Group {
   sessions: SessionSummary[];
 }
 
-function SessionRow({ s, showAgent, live }: { s: SessionSummary; showAgent: boolean; live: boolean }) {
+function SessionRow({
+  s,
+  showAgent,
+  showProject,
+  live,
+  onTag,
+}: {
+  s: SessionSummary;
+  showAgent: boolean;
+  showProject?: boolean;
+  live: boolean;
+  onTag: (tag: string) => void;
+}) {
   return (
     <a
       className={`sess${s.subagent ? ' sess--sub' : ''}`}
@@ -24,6 +36,22 @@ function SessionRow({ s, showAgent, live }: { s: SessionSummary; showAgent: bool
         {live ? <span className="live-dot" aria-label="运行中" /> : null}
         <span className="sess__t">{s.title}</span>
         {showAgent ? <span className="sess__agent">{AGENT_LABEL[s.agent]}</span> : null}
+        {showProject ? <span className="sess__agent">{projectName(s.cwd)}</span> : null}
+        {s.tags?.map((t) => (
+          <button
+            key={t}
+            type="button"
+            className="tag tag--btn"
+            title={`只看标签「${t}」`}
+            onClick={(e) => {
+              // 行本身是链接：点标签只筛选，不进会话
+              e.preventDefault();
+              onTag(t);
+            }}
+          >
+            {t}
+          </button>
+        ))}
         {s.subagent ? (
           <span className="sess__agent" title="子代理会话：由 agent 自动发起，不是你直接对话的">
             子代理 · {s.subagent}
@@ -43,6 +71,7 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [agent, setAgent] = useState<AgentId | 'all'>('all');
   const [query, setQuery] = useState('');
+  const [tag, setTag] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (refresh = false) => {
@@ -79,18 +108,29 @@ export default function Dashboard() {
     return out;
   }, [data]);
 
+  const tagCounts = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const s of data?.sessions ?? []) for (const t of s.tags ?? []) out.set(t, (out.get(t) ?? 0) + 1);
+    return [...out].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [data]);
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return (data?.sessions ?? []).filter((s) => {
       if (agent !== 'all' && s.agent !== agent) return false;
+      if (tag && !s.tags?.includes(tag)) return false;
       if (!needle) return true;
-      return `${s.title} ${s.cwd} ${s.preview ?? ''}`.toLowerCase().includes(needle);
+      return `${s.title} ${s.cwd} ${s.preview ?? ''} ${(s.tags ?? []).join(' ')}`.toLowerCase().includes(needle);
     });
-  }, [data, agent, query]);
+  }, [data, agent, tag, query]);
+
+  // 置顶的单独列在最上面，不再在项目分组里重复出现
+  const pinned = useMemo(() => filtered.filter((s) => s.pinned), [filtered]);
 
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, SessionSummary[]>();
     for (const s of filtered) {
+      if (s.pinned) continue;
       const key = s.cwd || '';
       const list = map.get(key);
       if (list) list.push(s);
@@ -110,7 +150,7 @@ export default function Dashboard() {
   );
 
   const stats = data?.stats;
-  const title = agent === 'all' ? '全部会话' : AGENT_LABEL[agent];
+  const title = `${agent === 'all' ? '全部会话' : AGENT_LABEL[agent]}${tag ? ` · ${tag}` : ''}`;
 
   return (
     <div className="shell">
@@ -120,7 +160,10 @@ export default function Dashboard() {
         <nav className="spine__agents">
           <button
             className={`nav${agent === 'all' ? ' is-active' : ''}`}
-            onClick={() => setAgent('all')}
+            onClick={() => {
+              setAgent('all');
+              setTag(null);
+            }}
             style={{ '--agent': 'var(--text-dim)' } as React.CSSProperties}
           >
             <span className="nav__label">全部会话</span>
@@ -138,6 +181,23 @@ export default function Dashboard() {
             </button>
           ))}
         </nav>
+
+        {tagCounts.length ? (
+          <nav className="spine__agents spine__tags" aria-label="标签">
+            <span className="spine__label">标签</span>
+            {tagCounts.map(([t, n]) => (
+              <button
+                key={t}
+                className={`nav${tag === t ? ' is-active' : ''}`}
+                onClick={() => setTag(tag === t ? null : t)}
+                style={{ '--agent': 'var(--text-dim)' } as React.CSSProperties}
+              >
+                <span className="nav__label"># {t}</span>
+                <span className="nav__count num">{n}</span>
+              </button>
+            ))}
+          </nav>
+        ) : null}
 
         {stats ? (
           <dl className="spine__stats">
@@ -162,6 +222,9 @@ export default function Dashboard() {
           </button>
           <a className="linkbtn" href={searchHref('')}>
             搜索
+          </a>
+          <a className="linkbtn" href={usageHref()}>
+            用量
           </a>
           <a className="linkbtn" href="#/settings">
             设置
@@ -210,6 +273,27 @@ export default function Dashboard() {
           </div>
         ) : null}
 
+        {tag ? (
+          <div className="search__status">
+            只显示带标签「{tag}」的会话 ·{' '}
+            <button className="linkbtn" onClick={() => setTag(null)}>
+              清除
+            </button>
+          </div>
+        ) : null}
+
+        {pinned.length ? (
+          <section className="group group--pinned">
+            <div className="group__head">
+              <h2 className="group__name">★ 置顶</h2>
+              <span className="group__count num">{pinned.length}</span>
+            </div>
+            {pinned.map((s) => (
+              <SessionRow s={s} key={s.id} live={liveIds.has(s.id)} showAgent showProject onTag={setTag} />
+            ))}
+          </section>
+        ) : null}
+
         {groups.map((g) => (
           <section className="group" key={g.cwd || 'unknown'}>
             <div className="group__head">
@@ -228,6 +312,7 @@ export default function Dashboard() {
                 key={s.id}
                 live={liveIds.has(s.id)}
                 showAgent={new Set(g.sessions.map((x) => x.agent)).size > 1}
+                onTag={setTag}
               />
             ))}
           </section>

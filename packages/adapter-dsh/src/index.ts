@@ -10,6 +10,7 @@ import {
   safeJsonParse,
   searchLines,
   zstdDecompressFrames,
+  UsageAcc,
   type AgentAdapter,
   type EventWindow,
   type Line,
@@ -21,6 +22,7 @@ import {
   type SearchQuery,
   type SessionSummary,
   type UnifiedEvent,
+  type UsageBucket,
 } from '@agentctl/core';
 import { startDshRun } from './live.ts';
 import { parseLine, sourceKind, type ParseCtx } from './parse.ts';
@@ -283,6 +285,19 @@ export class DshAdapter implements AgentAdapter {
     const data = await this.decoded(session.file);
     const win = bufferLinesFrom(data, after, maxBytes);
     return { events: this.parseWindow(session, win.lines), nextBefore: null, hasMore: win.hasMore, window: { start: win.start, end: win.end } };
+  }
+
+  /** DSH 不记价格，只有 token */
+  async usage(session: SessionSummary): Promise<UsageBucket[]> {
+    const data = await this.decoded(session.file);
+    const acc = new UsageAcc();
+    const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0, model: session.model, turnStartedAt: new Map() };
+    for (const l of bufferLines(data)) {
+      if (!l.text.includes('"assistant/message"') && !l.text.includes('"model/selection"') && !l.text.includes('"request/context"')) continue;
+      const d = safeJsonParse(l.text) as Rec | null;
+      if (d) acc.addEvents(parseLine(d, l.offset, ctx));
+    }
+    return acc.buckets();
   }
 
   async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {

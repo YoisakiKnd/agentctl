@@ -19,7 +19,7 @@
   --focus: #93a4c8;
 
   --claude: #c4663f;
-  --codex: #2f7d74;
+  --codex: #178f80;
   --dsh: #5b6bc0;
   --pi: #b08a3e;
   --cursor: #8a5a7a;
@@ -2173,5 +2173,490 @@ mark {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
     padding: 8px 4px 8px 12px;
+  }
+}
+
+/* ── 用量统计 ───────────────────────────────────────────── */
+
+.usage__ranges,
+.usage__metric {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.usage__metric .linkbtn {
+  margin-left: 8px;
+}
+
+.is-stale {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(4, 1fr);
+  margin: 6px 0 0;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tile {
+  padding: 14px 16px 14px 0;
+  min-width: 0;
+}
+
+.tile + .tile {
+  padding-left: 16px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.tile dt {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile dd {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.tile--hero dd {
+  font-size: 34px;
+  line-height: 1.15;
+}
+
+.chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.chart__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.chart__note {
+  color: var(--text-faint);
+  margin-left: auto;
+}
+
+.chart__plot {
+  position: relative;
+  width: 100%;
+}
+
+.chart__plot svg {
+  display: block;
+  overflow: visible;
+}
+
+.chart__grid {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+}
+
+.chart__axis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart__tick {
+  fill: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__plot g.is-hover path,
+.chart__plot g.is-hover rect:not([fill='transparent']) {
+  filter: brightness(1.18);
+}
+
+.chart__tip {
+  position: absolute;
+  top: 0;
+  min-width: 160px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.chart__tipday {
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.chart__tiprow {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart__tipval {
+  color: var(--text);
+  text-align: right;
+}
+
+.chart__tiptotal {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.utable__wrap {
+  overflow-x: auto;
+}
+
+.utable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.utable th,
+.utable td {
+  padding: 7px 0 7px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: right;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.utable th:first-child,
+.utable td:first-child {
+  padding-left: 0;
+  text-align: left;
+}
+
+.utable thead th {
+  font-size: 12px;
+  color: var(--text-faint);
+  border-bottom-color: var(--line);
+}
+
+.utable tbody th {
+  color: var(--text);
+}
+
+.utable td {
+  color: var(--text-dim);
+}
+
+.utable td.utable__dim {
+  color: var(--text-faint);
+}
+
+.utable__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.urow {
+  display: grid;
+  grid-template-columns: 2px minmax(0, 1fr) auto;
+  column-gap: 14px;
+  row-gap: 2px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+  text-decoration: none;
+}
+
+.urow:hover {
+  background: var(--panel-2);
+}
+
+.urow .sess__rail {
+  min-height: 0;
+}
+
+.urow__title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.urow__val {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.urow__meta {
+  grid-column: 2 / span 2;
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage__foot {
+  margin: 28px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  max-width: 72ch;
+}
+
+@media (max-width: 900px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tile--hero {
+    grid-column: 1 / -1;
+  }
+
+  .tile,
+  .tile + .tile {
+    padding: 10px 12px 10px 0;
+    border-left: 0;
+  }
+
+  .tile:nth-child(odd):not(.tile--hero) {
+    padding-left: 12px;
+    border-left: 1px solid var(--line-soft);
+  }
+
+  .tile:not(.tile--hero) {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .tile--hero dd {
+    font-size: 30px;
+  }
+
+  .chart__note {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
+
+  .usage__ranges {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
+}
+
+/* ── 注解：置顶 / 标签 / 改名 ───────────────────────────── */
+
+.spine__label {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding-bottom: 2px;
+}
+
+.spine__tags {
+  max-height: 32vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.tag--btn,
+.tag--suggest {
+  cursor: pointer;
+}
+
+.tag--btn:hover,
+.tag--suggest:hover {
+  color: var(--text);
+  border-color: #4a5568;
+}
+
+.tag--suggest {
+  background: transparent;
+  border-style: dashed;
+}
+
+.tag__x {
+  font: inherit;
+  color: var(--text-faint);
+  background: none;
+  border: 0;
+  padding: 0 0 0 3px;
+  cursor: pointer;
+}
+
+.tag__x:hover {
+  color: var(--text);
+}
+
+.tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.tags__add {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.tags__form {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.tags__input.input {
+  width: 160px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.pin-btn {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.pin-btn.is-on {
+  color: var(--pi);
+}
+
+.pin-btn__label {
+  font-size: 12px;
+}
+
+.session__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.session__title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.title-edit {
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.session__head:not(:hover) .title-edit:not(:focus-visible) {
+  opacity: 0;
+}
+
+.title-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.title-form .input {
+  flex: 1 1 260px;
+  max-width: 520px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.title-form__error {
+  font-size: 12px;
+  color: #e7a08f;
+}
+
+.group--pinned .group__name {
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .spine__tags {
+    max-height: none;
+    overflow-y: visible;
+    align-items: baseline;
+  }
+
+  .spine__label {
+    flex: none;
+    padding: 0;
+  }
+
+  .pin-btn__label {
+    display: none;
+  }
+
+  /* 触屏没有悬停：改名按钮一直显示 */
+  .session__head:not(:hover) .title-edit:not(:focus-visible) {
+    opacity: 1;
+  }
+
+  .title-form {
+    flex: 1 1 100%;
+    order: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  /* 放不下：窄屏不显示回复数与缓存读写，只留输入、输出、花费 */
+  .utable th:nth-last-child(6),
+  .utable td:nth-last-child(6),
+  .utable th:nth-last-child(2),
+  .utable td:nth-last-child(2),
+  .utable th:nth-last-child(3),
+  .utable td:nth-last-child(3) {
+    display: none;
+  }
+
+  .utable th,
+  .utable td {
+    padding-left: 10px;
+  }
+
+  /* 标签挤占标题：窄屏行内不显示，顶部标签栏仍可筛选 */
+  .sess__title .tag {
+    display: none;
   }
 }

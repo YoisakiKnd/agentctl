@@ -11,6 +11,8 @@
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **全文搜索**：一次扫所有 agent 的全部会话（不建索引），只匹配人能读到的内容（提问、回复、思考、命令、输出、diff），点结果直接跳到会话里的那一条并高亮。本机约 600MB 会话一次约 2.5 秒。
+- **用量统计**：每个 agent 每天花了多少钱、多少 token，按模型、按会话拆开看。Claude 的花费以它自己的记账为准，按回复摊到各天；Codex、DSH 只有 token。
+- **置顶、标签、改名**：给会话起自己的标题、打标签、置顶，看板按标签筛选。只存在 agentctl 的索引库里，不改 agent 的文件。
 - **改文件看 diff**：Claude 的 Edit / MultiEdit / Write、Codex 的 apply_patch / FileChange 都显示为可展开的着色 diff。
 - **会话看板**：按项目分组，显示标题、首条提问、轮数、花费、体积、最近活动时间；搜索标题/路径/首条消息；侧脊按 agent 过滤。
 - **时间线回放**：一轮一轮往下读，人类提问、助手文本（Markdown）、thinking、工具调用与结果、后台任务通知、每轮耗时与 token 用量、本轮模型。
@@ -19,6 +21,8 @@
 - **远程可用**：默认只听 `127.0.0.1`；`--host 0.0.0.0` 必须先设密码，否则拒绝启动。
 
 ![网页里审批 Claude 的工具调用](docs/screens/approval.png)
+
+![用量统计](docs/screens/usage.png)
 
 | 看板 | 时间线 |
 |---|---|
@@ -46,6 +50,7 @@ pnpm smoke:live           # 实时运行冒烟：真的跑一次 claude（haiku�
 pnpm smoke:codex          # Codex 解析冒烟：发现、每个会话首屏、uid 唯一性、轮次
 pnpm smoke:dsh            # DSH 解析冒烟（zstd 多帧解压 + 解析）
 pnpm smoke:pi             # Pi 解析冒烟（会话树取当前分支）
+pnpm smoke:usage          # 用量冒烟：Claude 每个会话按天合计 vs cost-state 记账
 pnpm typecheck            # 四个包的 tsc --noEmit
 pnpm status               # 看配置、监听地址、是否已设密码
 ```
@@ -171,6 +176,9 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/sessions/:id/events?after=` | 增量：从上次窗口末尾读到文件末尾（文件没变时只是一次 stat） |
 | GET | `/api/sessions/:id/events?through=` | 跳转：窗口以这个偏移所在的行结尾 |
 | GET | `/api/search?q=&agent=` | 全文搜索；最多 200 处、单会话 20 处、15 秒上限，超出时 `truncated: true` |
+| GET | `/api/usage?days=&agent=` | 用量：按天 × agent、按 agent、按模型、前 20 个会话；`days=0` 为全部 |
+| POST | `/api/sessions/:id/annotation` | 注解 `{pinned?, tags?, title?}`，缺省字段不改，`title: ""` 恢复原标题 |
+| GET | `/api/tags` | 所有标签及使用次数 |
 | GET | `/api/agents/:id/models` | CLI 当前可用的模型（`initialize` 握手拿到，不花钱，缓存 10 分钟） |
 | POST | `/api/runs/:id/model` | 运行中切换模型 `{model}` |
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |

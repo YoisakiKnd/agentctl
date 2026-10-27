@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, HttpError } from '../api';
+import { PinButton, TagEditor, TitleEditor } from '../components/Annotate';
 import Composer, { modesFor } from '../components/Composer';
 import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
@@ -447,13 +448,15 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             ←
           </a>
           <div className="session__titlewrap">
-            <h1 className="session__title">{session?.title ?? '加载中…'}</h1>
+            {session ? <TitleEditor key={session.id} session={session} onChange={setSession} /> : <h1 className="session__title">加载中…</h1>}
             <div className="session__meta num">
               {meta.map((m) => (
                 <span key={m}>{m}</span>
               ))}
+              {session ? <TagEditor key={session.id} session={session} onChange={setSession} /> : null}
             </div>
           </div>
+          {session ? <PinButton session={session} onChange={setSession} /> : null}
           {session ? (
             <a
               className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}

@@ -1,5 +1,6 @@
 import type { AgentId, EventWindow, SessionSummary, UnifiedEvent } from './events.ts';
 import type { SearchHit, SearchQuery } from './search.ts';
+import type { UsageBucket } from './usage.ts';
 
 export interface AgentMeta {
   name: string;
@@ -61,6 +62,11 @@ export interface AgentAdapter {
   contentLength?(session: SessionSummary): Promise<number>;
   /** 可选：全文搜索这个会话（见 core/search.ts 的两段式匹配） */
   search?(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]>;
+  /**
+   * 可选：整个会话按天 × 模型的用量（全量扫描，server 按 size+mtime 缓存结果）。
+   * 计的是实际花出去的量：会被回退掉的分支（Pi）、子代理也算在内。
+   */
+  usage?(session: SessionSummary): Promise<UsageBucket[]>;
   /** 可选：在真终端里续接这个会话的参数（Shell 模式用），例如 claude 是 ['--resume', id] */
   resumeArgs?(session: SessionSummary): string[];
   /** 可选：该 agent 命令行当前能用的模型（与终端里 /model 看到的一致） */

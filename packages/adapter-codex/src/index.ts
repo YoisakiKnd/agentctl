@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import {
+  UsageAcc,
   lineEndAt,
   oneLine,
   readLinesBefore,
@@ -21,6 +22,7 @@ import {
   type SearchQuery,
   type SessionSummary,
   type UnifiedEvent,
+  type UsageBucket,
 } from '@agentctl/core';
 import { probeCodexModels, startCodexRun } from './live.ts';
 import { humanPrompt, isTurnStart, parseLine, type ParseCtx } from './parse.ts';
@@ -275,6 +277,19 @@ export class CodexAdapter implements AgentAdapter {
 
   resumeArgs(session: SessionSummary): string[] {
     return ['resume', session.sessionId];
+  }
+
+  /** 只有 token，没有花费（Codex 按订阅计费，rollout 里不记价格） */
+  async usage(session: SessionSummary): Promise<UsageBucket[]> {
+    const acc = new UsageAcc();
+    const ctx: ParseCtx = { file: session.file, sessionId: session.sessionId, turn: 0 };
+    for await (const l of streamLines(session.file)) {
+      // 只有这几种行影响用量：turn_context 带模型，另两种是两代格式各自的 token 记录
+      if (!l.text.includes('"turn_context"') && !l.text.includes('"token_count"') && !l.text.includes('"token_usage_record"')) continue;
+      const d = safeJsonParse(l.text) as Rec | null;
+      if (d) acc.addEvents(parseLine(d, l.offset, ctx));
+    }
+    return acc.buckets();
   }
 
   /** 大文件的轮次数与首条提问（discover 只读了头尾） */

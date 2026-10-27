@@ -19,7 +19,7 @@ import { registerRoutes } from './routes.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 
 interface ServeOptions {
   host?: string;
@@ -147,6 +147,8 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
 
   // 预热：先把会话列表扫出来，首屏打开就有内容
   void registry.list(true).catch((err) => app.log.error(err));
+  // 用量要全量扫所有会话：启动后稍等再在后台算一遍，打开用量页时多半已经有缓存
+  setTimeout(() => void registry.usage().catch((err) => app.log.error(err)), 20_000).unref();
 
   await app.listen({ host: cfg.host, port: cfg.port });
 

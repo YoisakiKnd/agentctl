@@ -14,6 +14,7 @@ import { expandHome, isPathAllowed, type Config } from './config.ts';
 import type { Registry } from './registry.ts';
 import type { RunInfo, RunManager } from './runs.ts';
 import type { ShellKind, ShellManager } from './shells.ts';
+import { usageReport } from './usage.ts';
 
 export interface Ctx {
   cfg: Config;
@@ -73,6 +74,23 @@ function answersOf(value: unknown): Record<string, string> | undefined {
     if (typeof v !== 'string' || k.length > 2000 || v.length > 10_000) throw new BadRequest('answers 格式不合法');
     out[k] = v;
   }
+  return out;
+}
+
+const MAX_TAGS = 12;
+
+/** 标签：去首尾空白、去重，单个不超过 32 字，不含逗号（前端用逗号分隔输入） */
+function tagsOf(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new BadRequest('tags 必须是字符串数组');
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== 'string') throw new BadRequest('tags 必须是字符串数组');
+    const t = v.replace(/[\p{Cc},，]/gu, ' ').trim();
+    if (!t) continue;
+    if (t.length > 32) throw new BadRequest('单个标签不能超过 32 个字');
+    if (!out.includes(t)) out.push(t);
+  }
+  if (out.length > MAX_TAGS) throw new BadRequest(`最多 ${MAX_TAGS} 个标签`);
   return out;
 }
 
@@ -244,7 +262,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       if (q.agent && s.agent !== q.agent) return false;
       if (q.q) {
         const needle = q.q.toLowerCase();
-        const hay = `${s.title} ${s.cwd} ${s.preview ?? ''}`.toLowerCase();
+        const hay = `${s.title} ${s.cwd} ${s.preview ?? ''} ${(s.tags ?? []).join(' ')}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
@@ -300,6 +318,47 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       return reply.code(404).send({ error: '会话不存在' });
     }
     return window;
+  });
+
+  /* ── 注解：置顶 / 标签 / 改标题 ─────────────────────────── */
+
+  // 只存在 agentctl 的索引库里，不碰 agent 的会话文件；字段缺省表示不改
+  app.post('/api/sessions/:id/annotation', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const session = await registry.get(id);
+    if (!session) return reply.code(404).send({ error: '会话不存在' });
+    const body = (req.body ?? {}) as { pinned?: unknown; tags?: unknown; title?: unknown };
+    const next = { ...registry.annotation(id) };
+    if (body.pinned !== undefined) {
+      if (typeof body.pinned !== 'boolean') throw new BadRequest('pinned 必须是布尔值');
+      next.pinned = body.pinned;
+    }
+    if (body.tags !== undefined) next.tags = tagsOf(body.tags);
+    if (body.title !== undefined) {
+      if (body.title !== null && typeof body.title !== 'string') throw new BadRequest('title 必须是字符串');
+      const title = typeof body.title === 'string' ? oneLine(body.title, 200).trim() : '';
+      // 清空或改回原标题都等于"不再覆盖"
+      next.title = title && title !== (session.originalTitle ?? session.title) ? title : undefined;
+    }
+    registry.setAnnotation(id, next);
+    return { session: await registry.get(id) };
+  });
+
+  app.get('/api/tags', async () => {
+    await registry.list();
+    return { tags: registry.tags() };
+  });
+
+  /* ── 用量统计 ─────────────────────────────────────────── */
+
+  // 第一次要把所有会话完整扫一遍（本机 ~500MB 约 2 秒），之后只重算变过的会话
+  app.get('/api/usage', async (req, reply) => {
+    const q = req.query as { days?: string; agent?: string };
+    const days = q.days === undefined ? 30 : Number(q.days);
+    if (!Number.isInteger(days) || days < 0 || days > 3650) return reply.code(400).send({ error: 'days 必须是 0–3650 的整数' });
+    const started = Date.now();
+    const all = await registry.usage();
+    return { ...usageReport(all, days, q.agent || undefined), ms: Date.now() - started };
   });
 
   /* ── 全文搜索 ─────────────────────────────────────────── */

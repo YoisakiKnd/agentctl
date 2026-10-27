@@ -6,6 +6,7 @@ export type Route =
   | { name: 'search'; q: string; agent?: string }
   | { name: 'shell'; id: string; kind: 'agent' | 'shell' }
   | { name: 'new'; cwd?: string; agent?: 'claude' | 'codex' | 'dsh' }
+  | { name: 'usage'; days: number; agent?: string }
   | { name: 'settings' }
   | { name: 'login' };
 
@@ -18,6 +19,11 @@ export function parseHash(hash: string): Route {
     return { name: 'new', cwd: q.get('cwd') ?? undefined, agent: agent === 'codex' || agent === 'claude' || agent === 'dsh' ? agent : undefined };
   }
   if (path === '/settings') return { name: 'settings' };
+  if (path === '/usage') {
+    const q = new URLSearchParams(query);
+    const days = Number(q.get('days') ?? 30);
+    return { name: 'usage', days: Number.isInteger(days) && days >= 0 ? days : 30, agent: q.get('agent') ?? undefined };
+  }
   if (path === '/login') return { name: 'login' };
   const sh = /^\/s\/(.+)\/shell$/.exec(path);
   if (sh) {
@@ -70,4 +76,10 @@ export function newSessionHref(cwd?: string, agent?: string): string {
 
 export function shellHref(id: string, kind: 'agent' | 'shell' = 'agent'): string {
   return `#/s/${encodeURIComponent(id)}/shell${kind === 'shell' ? '?kind=shell' : ''}`;
+}
+
+export function usageHref(days = 30, agent?: string): string {
+  const p = new URLSearchParams({ days: String(days) });
+  if (agent) p.set('agent', agent);
+  return `#/usage?${p}`;
 }

@@ -21,9 +21,11 @@ import {
   type RunSink,
   type SessionSummary,
   type UnifiedEvent,
+  type UsageBucket,
 } from '@agentctl/core';
 import { harvest, isHumanPrompt, parseLine, turnIndexOf, type Facts, type ParseCtx } from './parse.ts';
 import { probeModels, startClaudeRun } from './live.ts';
+import { claudeUsage, CostLedger, ratesFrom } from './usage.ts';
 
 export class ClaudeAdapter implements AgentAdapter {
   id = 'claude' as const;
@@ -101,6 +103,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     const sessionId = facts.sessionId ?? file.split('/').pop()!.replace(/\.jsonl$/, '');
+    if (facts.modelUsage) this.lastCostState.set(file, facts.modelUsage);
     const cwd = facts.cwd ?? '';
     const title =
       facts.title ||
@@ -181,7 +184,7 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   async refine(session: SessionSummary): Promise<Partial<SessionSummary>> {
     let turns = 0;
-    let costUsd = session.costUsd;
+    const ledger = new CostLedger();
     let preview = session.preview;
 
     for await (const line of streamLines(session.file)) {
@@ -207,11 +210,18 @@ export class ClaudeAdapter implements AgentAdapter {
       }
       if (line.text.startsWith('{"type":"cost-state"')) {
         const d = safeJsonParse(line.text) as Record<string, unknown> | null;
-        if (d && typeof d.totalCostUSD === 'number') costUsd = d.totalCostUSD;
+        if (d) ledger.feed(d);
       }
     }
 
-    return { turns, costUsd, preview };
+    return { turns, costUsd: ledger.total || session.costUsd, preview };
+  }
+
+  /** discover 读尾部时拿到的各会话最后一次记账，给还没记账的回复估价用 */
+  private readonly lastCostState = new Map<string, Record<string, Record<string, unknown>>>();
+
+  usage(session: SessionSummary): Promise<UsageBucket[]> {
+    return claudeUsage(session.file, () => ratesFrom(this.lastCostState.values()));
   }
 
   async search(session: SessionSummary, q: SearchQuery, limit: number): Promise<SearchHit[]> {

@@ -105,6 +105,11 @@ export interface SessionSummary {
   unknownTypes?: Record<string, number>;
   /** 子代理会话（例如 Codex 的 Guardian 审查），值为子代理名；列表里弱化显示 */
   subagent?: string;
+  /** 以下是 agentctl 自己的注解（存在索引库里，不写 agent 的文件） */
+  pinned?: boolean;
+  tags?: string[];
+  /** 用户改过标题时，agent 自己给的原标题 */
+  originalTitle?: string;
 }
 
 export interface EventWindow {
