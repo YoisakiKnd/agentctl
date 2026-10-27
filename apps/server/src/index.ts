@@ -16,10 +16,11 @@ import { hashPassword, LoginThrottle } from './auth.ts';
 import { IndexDb } from './db.ts';
 import { Registry } from './registry.ts';
 import { registerRoutes } from './routes.ts';
+import { QuotaService } from './quota.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 interface ServeOptions {
   host?: string;
@@ -97,7 +98,11 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
   const db = new IndexDb(DB_PATH);
   const registry = new Registry(adapters, db);
   // 进程结束后会话文件变了（轮次、花费），让列表重扫
-  const runs = new RunManager(() => registry.invalidate());
+  const quota = new QuotaService(registry);
+  const runs = new RunManager(
+    () => registry.invalidate(),
+    (run) => quota.touch(run.agent),
+  );
   const shells = new ShellManager();
   const throttle = new LoginThrottle();
 
@@ -123,7 +128,7 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
   await app.register(cookie);
   // 终端输入输出要双向低延迟，用 WebSocket；单帧上限给粘贴大段文本留余地
   await app.register(websocket, { options: { maxPayload: 1024 * 1024 } });
-  await registerRoutes(app, { cfg, registry, runs, shells, throttle, version: VERSION, remote });
+  await registerRoutes(app, { cfg, registry, runs, shells, quota, throttle, version: VERSION, remote });
 
   const webDist = resolve(import.meta.dirname, '../../../apps/web/dist');
   if (existsSync(join(webDist, 'index.html'))) {
@@ -148,6 +153,7 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
   // 预热：先把会话列表扫出来，首屏打开就有内容
   void registry.list(true).catch((err) => app.log.error(err));
   // 用量要全量扫所有会话：启动后稍等再在后台算一遍，打开用量页时多半已经有缓存
+  quota.start();
   setTimeout(() => void registry.usage().catch((err) => app.log.error(err)), 20_000).unref();
 
   await app.listen({ host: cfg.host, port: cfg.port });
@@ -185,6 +191,7 @@ async function cmdServe(opts: ServeOptions): Promise<void> {
   const shutdown = async () => {
     runs.stopAll();
     shells.killAll();
+    quota.stop();
     await app.close();
     db.close();
     process.exit(0);

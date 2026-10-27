@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { patchSession } from '../store';
 import type { SessionSummary } from '../types';
+import Icon from './Icon';
 
 type Patch = { pinned?: boolean; tags?: string[]; title?: string };
 
@@ -12,6 +14,7 @@ function useAnnotate(session: SessionSummary, onChange: (s: SessionSummary) => v
     try {
       const { session: next } = await api.annotate(session.id, patch);
       onChange(next);
+      patchSession(next);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
@@ -27,13 +30,13 @@ export function PinButton({ session, onChange }: { session: SessionSummary; onCh
   return (
     <button
       type="button"
-      className={`btn btn--ghost btn--sm pin-btn${on ? ' is-on' : ''}`}
+      className={`iconbtn iconbtn--bordered pin-btn${on ? ' is-on' : ''}`}
       aria-pressed={on}
+      aria-label={on ? '取消置顶' : '置顶'}
       title={error || (on ? '取消置顶' : '置顶：在会话列表最上面单独列出')}
       onClick={() => void save({ pinned: !on })}
     >
-      {on ? '★' : '☆'}
-      <span className="pin-btn__label">{on ? '已置顶' : '置顶'}</span>
+      <Icon name="star" filled={on} />
     </button>
   );
 }
@@ -55,13 +58,15 @@ export function TitleEditor({ session, onChange }: { session: SessionSummary; on
         <span title={session.originalTitle ? `原标题：${session.originalTitle}` : undefined}>{session.title}</span>
         <button
           type="button"
-          className="linkbtn title-edit"
+          className="iconbtn iconbtn--xs title-edit"
+          aria-label="改名"
+          title={session.originalTitle ? `改名（原标题：${session.originalTitle}）` : '改名'}
           onClick={() => {
             setDraft(session.title);
             setEditing(true);
           }}
         >
-          改名
+          <Icon name="pencil" size={13} />
         </button>
       </h1>
     );
@@ -139,10 +144,10 @@ export function TagEditor({ session, onChange }: { session: SessionSummary; onCh
   return (
     <span className="tags">
       {tags.map((t) => (
-        <span className="tag" key={t}>
-          {t}
-          <button type="button" className="tag__x" aria-label={`去掉标签 ${t}`} onClick={() => void save({ tags: tags.filter((x) => x !== t) })}>
-            ×
+        <span className="pill pill--tag" key={t}>
+          # {t}
+          <button type="button" className="pill__x" aria-label={`去掉标签 ${t}`} onClick={() => void save({ tags: tags.filter((x) => x !== t) })}>
+            <Icon name="x" size={11} />
           </button>
         </span>
       ))}
@@ -173,14 +178,15 @@ export function TagEditor({ session, onChange }: { session: SessionSummary; onCh
             }}
           />
           {suggestions.map((k) => (
-            <button key={k} type="button" className="tag tag--suggest" onClick={() => void save({ tags: [...tags, k] }).then((ok) => ok && setAdding(false))}>
+            <button key={k} type="button" className="pill pill--suggest" onClick={() => void save({ tags: [...tags, k] }).then((ok) => ok && setAdding(false))}>
               {k}
             </button>
           ))}
         </form>
       ) : (
-        <button type="button" className="linkbtn tags__add" onClick={() => setAdding(true)}>
-          ＋ 标签
+        <button type="button" className="pill pill--add" onClick={() => setAdding(true)}>
+          <Icon name="tag" size={11} />
+          标签
         </button>
       )}
       {error ? <span className="title-form__error">{error}</span> : null}

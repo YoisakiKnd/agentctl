@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, HttpError } from '../api';
 import { PinButton, TagEditor, TitleEditor } from '../components/Annotate';
+import Icon from '../components/Icon';
+import AppShell, { DrawerButton } from '../components/Layout';
+import { QuotaAlert } from '../components/Quota';
+import { AgentBadge } from '../components/AgentBadge';
 import Composer, { modesFor } from '../components/Composer';
 import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
 import { mergeEvents, useLiveRun } from '../live';
 import { navigate, sessionHref, shellHref } from '../router';
-import type { ApprovalDecision, PermissionMode, RunInfo, RunState, SessionSummary, UnifiedEvent } from '../types';
+import type { ApprovalDecision, PermissionMode, RunState, SessionSummary, UnifiedEvent } from '../types';
 import { AGENT_LABEL } from '../types';
 import type { RunOptions } from '../api';
 
@@ -48,9 +52,6 @@ export default function Session({ id, at }: { id: string; at?: number }) {
   const [runModel, setRunModel] = useState<string | undefined>();
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState('');
-  const [list, setList] = useState<SessionSummary[]>([]);
-  const [liveRuns, setLiveRuns] = useState<RunInfo[]>([]);
-  const [railOpen, setRailOpen] = useState(false);
   const [unseen, setUnseen] = useState(false);
   /** 搜索跳转模式下，命中位置之后还有没加载的内容 */
   const [forwardMore, setForwardMore] = useState(false);
@@ -239,28 +240,6 @@ export default function Session({ id, at }: { id: string; at?: number }) {
     };
   }, [pollTail, processAlive, at]);
 
-  // 侧栏会话列表与运行标记：15 秒刷新一次
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      if (document.visibilityState !== 'visible') return;
-      api
-        .sessions()
-        .then(({ sessions, runs }) => {
-          if (cancelled) return;
-          setList(sessions);
-          setLiveRuns(runs ?? []);
-        })
-        .catch(() => undefined);
-    };
-    load();
-    const timer = setInterval(load, 15_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [id]);
-
   // 进程结束：立刻对齐一次磁盘，并刷新轮次 / 花费
   useEffect(() => {
     if (runState !== 'exited') return;
@@ -379,21 +358,18 @@ export default function Session({ id, at }: { id: string; at?: number }) {
 
   if (error && !session) {
     return (
-      <div className="app">
-        <header className="topbar">
-          <a className="btn btn--ghost btn--sm" href="#/">
-            ← 返回
-          </a>
-          <span className="topbar__meta mono">出错了</span>
-        </header>
-        <div className="empty empty--error">{error}</div>
-      </div>
+      <AppShell active="session" currentId={id} title="出错了">
+        <div className="empty empty--error">
+          <Icon name="alert" size={28} />
+          <p className="empty__title">打不开这个会话</p>
+          <p className="empty__body">{error}</p>
+        </div>
+      </AppShell>
     );
   }
 
   const meta = session
     ? [
-        AGENT_LABEL[session.agent],
         session.turns > 0 ? `${session.turns} 轮` : null,
         formatCost(session.costUsd) || null,
         session.sizeBytes ? formatBytes(session.sizeBytes) : null,
@@ -401,84 +377,58 @@ export default function Session({ id, at }: { id: string; at?: number }) {
       ].filter(Boolean)
     : [];
   const status = stateLabel(runState, pending, canRun);
-  const busyIds = new Set(liveRuns.filter((r) => r.state !== 'exited').map((r) => r.sessionKey));
+  const terminalHref = shellHref(id, canResume ? 'agent' : 'shell');
 
   return (
-    <div className="session">
-      <aside className={`rail${railOpen ? ' is-open' : ''}`}>
-        <div className="rail__head mono">
-          <span>会话</span>
-          <a className="rail__all" href="#/">
-            全部会话
-          </a>
-        </div>
-        <div className="rail__list">
-          {list.map((s) => (
-            <a
-              className={`rail__item${s.id === id ? ' is-active' : ''}`}
-              key={s.id}
-              href={sessionHref(s.id)}
-              style={{ '--agent': `var(--${s.agent})` } as React.CSSProperties}
-              onClick={() => setRailOpen(false)}
-            >
-              <span className="rail__rail" />
-              <span className="rail__title">
-                {busyIds.has(s.id) ? <span className="live-dot" aria-label="运行中" /> : null}
-                {s.title}
-              </span>
-              <span className="rail__time mono">{timeAgo(s.updatedAt)}</span>
-            </a>
-          ))}
-        </div>
-      </aside>
-
-      <main
-        className="session__main"
-        style={{ '--agent': `var(--${session?.agent ?? 'claude'})` } as React.CSSProperties}
-      >
-        <header className="session__head">
-          <button
-            className="btn btn--ghost btn--sm rail-toggle"
-            onClick={() => setRailOpen((v) => !v)}
-            aria-label="切换会话列表"
-          >
-            ☰
-          </button>
-          <a className="btn btn--ghost btn--sm back-link" href="#/">
-            ←
-          </a>
-          <div className="session__titlewrap">
+    <AppShell active="session" currentId={id} bare topbar={false}>
+      <div className="sview" style={{ '--agent': `var(--${session?.agent ?? 'claude'})` } as React.CSSProperties}>
+        <header className="shead">
+          <DrawerButton />
+          {session ? <AgentBadge agent={session.agent} /> : null}
+          <div className="shead__text">
             {session ? <TitleEditor key={session.id} session={session} onChange={setSession} /> : <h1 className="session__title">加载中…</h1>}
-            <div className="session__meta num">
+            <div className="shead__meta num">
+              {session ? <span className="shead__agent">{AGENT_LABEL[session.agent]}</span> : null}
               {meta.map((m) => (
                 <span key={m}>{m}</span>
               ))}
-              {session ? <TagEditor key={session.id} session={session} onChange={setSession} /> : null}
+              {session ? (
+                <span className="shead__path mono" title={session.cwd}>
+                  {homeShorten(session.cwd)}
+                </span>
+              ) : null}
             </div>
+            {session ? (
+              <div className="shead__tags">
+                <TagEditor key={session.id} session={session} onChange={setSession} />
+              </div>
+            ) : null}
           </div>
-          {session ? <PinButton session={session} onChange={setSession} /> : null}
-          {session ? (
-            <a
-              className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}
-              // 没有可续接的 TUI（DSH、Pi），直接给会话目录里的 shell
-              href={shellHref(id, canResume ? 'agent' : 'shell')}
-              title="打开真终端：在网页里续接这个会话（claude --resume / codex resume），或在会话目录开 shell"
-            >
-              {agentShell ? <span className="live-dot" aria-hidden="true" /> : null}
-              终端
-            </a>
-          ) : null}
-          {processAlive && live.permissionMode && live.permissionMode !== 'default' ? (
-            <span className={`mode-badge${live.permissionMode === 'bypassPermissions' ? ' is-danger' : ''}`}>
-              {modesFor(session?.agent ?? 'claude').find((m) => m.value === live.permissionMode)?.label ?? live.permissionMode}
-            </span>
-          ) : null}
-          {status.text ? (
-            <span className={`session__mode${status.live ? ' is-live' : ''}`}>
-              {status.live ? <span className="live-dot" aria-hidden="true" /> : null}
-              {status.text}
-            </span>
-          ) : null}
+          <div className="shead__actions">
+            {status.text ? (
+              <span className={`status${status.live ? ' is-live' : ''}`}>
+                {status.live ? <span className="live-dot" aria-hidden="true" /> : null}
+                {status.text}
+              </span>
+            ) : null}
+            {processAlive && live.permissionMode && live.permissionMode !== 'default' ? (
+              <span className={`pill${live.permissionMode === 'bypassPermissions' ? ' pill--danger' : ''}`}>
+                {modesFor(session?.agent ?? 'claude').find((m) => m.value === live.permissionMode)?.label ?? live.permissionMode}
+              </span>
+            ) : null}
+            {session ? <PinButton session={session} onChange={setSession} /> : null}
+            {session ? (
+              <a
+                className={`btn btn--sm term-link${agentShell ? ' is-live' : ''}`}
+                // 没有可续接的 TUI（DSH、Pi），直接给会话目录里的 shell
+                href={terminalHref}
+                title="打开真终端：在网页里续接这个会话（claude --resume / codex resume），或在会话目录开 shell"
+              >
+                {agentShell ? <span className="live-dot" aria-hidden="true" /> : <Icon name="terminal" size={14} />}
+                <span className="term-link__label">终端</span>
+              </a>
+            ) : null}
+          </div>
         </header>
 
         <div
@@ -490,34 +440,38 @@ export default function Session({ id, at }: { id: string; at?: number }) {
           onKeyDown={markInput}
           onMouseDown={markInput}
         >
-          {file.hasMore ? (
-            <button className="more" onClick={() => void loadOlder()} disabled={loadingOlder}>
-              {loadingOlder ? '加载中…' : '加载更早的内容'}
-            </button>
-          ) : (
-            <div className="timeline__start mono">— 会话开始 —</div>
-          )}
-          {error ? <div className="empty empty--error">{error}</div> : null}
-          <div ref={rows}>
-            <Timeline events={events} onDecide={runId ? decide : undefined} draft={live.draft} highlight={at} />
-            {at !== undefined ? (
-              <div className="jumpbar">
-                <span className="is-faint">正在查看搜索命中的位置</span>
-                {forwardMore ? (
-                  <button className="linkbtn" onClick={() => void loadForward()}>
-                    加载后面的内容
-                  </button>
-                ) : null}
-                <a className="linkbtn" href={sessionHref(id)}>
-                  回到最新
-                </a>
-              </div>
+          <div className="timeline__inner">
+            {file.hasMore ? (
+              <button className="more" onClick={() => void loadOlder()} disabled={loadingOlder}>
+                {loadingOlder ? '加载中…' : '加载更早的内容'}
+              </button>
+            ) : session ? (
+              <div className="timeline__start">会话开始</div>
             ) : null}
-            {live.error && runState === 'exited' ? <div className="notice notice--error">{live.error}</div> : null}
+            {error ? <div className="empty empty--error">{error}</div> : null}
+            <div ref={rows}>
+              <Timeline events={events} onDecide={runId ? decide : undefined} draft={live.draft} highlight={at} />
+              {at !== undefined ? (
+                <div className="jumpbar">
+                  <Icon name="search" size={14} />
+                  <span>正在查看搜索命中的位置</span>
+                  {forwardMore ? (
+                    <button className="linkbtn" onClick={() => void loadForward()}>
+                      加载后面的内容
+                    </button>
+                  ) : null}
+                  <a className="linkbtn" href={sessionHref(id)}>
+                    回到最新
+                  </a>
+                </div>
+              ) : null}
+              {live.error && runState === 'exited' ? <div className="notice notice--error">{live.error}</div> : null}
+            </div>
           </div>
           {unseen ? (
             <button className="jump" onClick={jumpToLatest}>
-              ↓ 有新内容
+              <Icon name="chevronDown" size={14} />
+              有新内容
             </button>
           ) : null}
         </div>
@@ -539,18 +493,15 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             runPermissionMode={live.permissionMode ?? undefined}
             onSetPermissionMode={runId ? setPermissionMode : undefined}
             warning={warning}
+            notice={<QuotaAlert agent={session.agent} />}
           />
-        ) : (
-          <footer className="session__foot">
-            <span className="session__path mono" title={session?.file}>
-              {session ? homeShorten(session.file) : ''}
-            </span>
-            <span className="session__note">
-              {canResume ? '这个 agent 还不能在输入框里对话，可以点右上角「终端」续接' : '这个 agent 目前只能回放'}
-            </span>
+        ) : session ? (
+          <footer className="readonly">
+            <Icon name="terminal" size={14} />
+            <span>{canResume ? '这个 agent 还不能在输入框里对话，可以用右上角的「终端」续接' : '这个 agent 目前只能回放'}</span>
           </footer>
-        )}
-      </main>
-    </div>
+        ) : null}
+      </div>
+    </AppShell>
   );
 }

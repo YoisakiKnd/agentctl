@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { AgentBadge } from '../components/AgentBadge';
+import Icon, { type IconName } from '../components/Icon';
+import AppShell from '../components/Layout';
+import { QuotaAgent } from '../components/Quota';
 import { formatBytes, formatCost, formatDateTime, homeShorten } from '../format';
+import { useQuota } from '../store';
+import { setThemePref, useTheme, type ThemePref } from '../theme';
 import type { AgentInfo, Stats } from '../types';
 import { AGENT_LABEL } from '../types';
 
@@ -9,19 +15,21 @@ const LIVE_LABEL: Record<string, string> = {
   rpc: 'JSON-RPC',
   acp: 'ACP',
   pty: 'PTY',
-  false: '未接入',
+  false: '只读回放',
 };
 
-export default function Settings({
-  onLogout,
-  authRequired,
-}: {
-  onLogout: () => void;
-  authRequired: boolean;
-}) {
+const THEMES: { value: ThemePref; label: string; icon: IconName }[] = [
+  { value: 'system', label: '跟随系统', icon: 'monitor' },
+  { value: 'dark', label: '深色', icon: 'moon' },
+  { value: 'light', label: '浅色', icon: 'sun' },
+];
+
+export default function Settings({ onLogout, authRequired }: { onLogout: () => void; authRequired: boolean }) {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState('');
+  const { pref } = useTheme();
+  const quota = useQuota();
 
   useEffect(() => {
     api
@@ -39,108 +47,141 @@ export default function Settings({
   }
 
   return (
-    <div className="shell">
-      <aside className="spine">
-        <div className="spine__brand">agentctl</div>
-        <nav className="spine__agents">
-          <a className="nav" href="#/">
-            <span className="nav__label">会话</span>
-          </a>
-          <span className="nav is-active" style={{ '--agent': 'var(--text)' } as React.CSSProperties}>
-            <span className="nav__label">设置</span>
-          </span>
-        </nav>
-        <div className="spine__foot">
+    <AppShell active="settings" title="设置">
+      <div className="narrow">
+        <header className="pagehead">
+          <div className="pagehead__text">
+            <h1 className="pagehead__title">设置</h1>
+            <p className="pagehead__sub">配置文件在 <span className="mono">~/.agentctl/config.yaml</span>，这里只放网页上能直接改的和需要知道的。</p>
+          </div>
           {authRequired ? (
-            <button className="linkbtn" onClick={() => void logout()}>
-              退出登录
-            </button>
+            <div className="pagehead__actions">
+              <button className="btn" onClick={() => void logout()}>
+                <Icon name="logout" size={15} />
+                退出登录
+              </button>
+            </div>
           ) : null}
-        </div>
-      </aside>
-
-      <main className="board board--narrow">
-        <header className="board__head">
-          <h1 className="board__title">设置</h1>
-          <a className="linkbtn board__back" href="#/">
-            返回会话
-          </a>
         </header>
 
-      {error ? <div className="empty empty--error">{error}</div> : null}
+        {error ? <div className="empty empty--error">{error}</div> : null}
 
-      {stats ? (
-        <section className="section">
+        <section className="card section">
           <div className="section__head">
-            <h2 className="section__title">索引</h2>
+            <h2 className="section__title">外观</h2>
+            <span className="section__hint">只保存在这个浏览器里</span>
           </div>
-          <dl className="kv num">
-            <dt>会话</dt>
-            <dd>{stats.sessions}</dd>
-            <dt>累计花费</dt>
-            <dd>{formatCost(stats.totalCostUsd) || '—'}</dd>
-            <dt>磁盘占用</dt>
-            <dd>{formatBytes(stats.totalBytes)}</dd>
-            <dt>最近活动</dt>
-            <dd>{formatDateTime(stats.latestAt)}</dd>
-          </dl>
-        </section>
-      ) : null}
-
-      <section className="section">
-        <div className="section__head">
-          <h2 className="section__title">Agent 适配器</h2>
-          <span className="section__hint">Claude Code、Codex、DeepSeek Harness 可回放与实时运行；Pi 只读回放；Cursor 本机未安装</span>
-        </div>
-        {agents.map((a) => (
-          <div className="agent" key={a.id}>
-            <span
-              className="agent__rail"
-              style={{ '--agent': `var(--${a.id})` } as React.CSSProperties}
-            />
-            <div>
-              <div className="agent__name">
-                {AGENT_LABEL[a.id]}
-                <span className={`agent__state${a.available ? ' is-on' : ''}`}>
-                  {a.available ? '命令行可用' : '命令行未安装'}
+          <div className="themepick" role="radiogroup" aria-label="主题">
+            {THEMES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                role="radio"
+                aria-checked={pref === t.value}
+                className={`themepick__opt${pref === t.value ? ' is-on' : ''}`}
+                onClick={() => setThemePref(t.value)}
+              >
+                <span className={`themepick__swatch themepick__swatch--${t.value}`} aria-hidden="true" />
+                <span className="themepick__label">
+                  <Icon name={t.icon} size={14} />
+                  {t.label}
                 </span>
-              </div>
-              <div className="agent__meta num">
-                <span>{a.sessionCount} 个会话</span>
-                <span>{LIVE_LABEL[String(a.capabilities.live)]}</span>
-                <span className="mono">{homeShorten(a.dataDir)}</span>
-                {a.binaryPath ? <span className="mono">{homeShorten(a.binaryPath)}</span> : null}
-              </div>
-            </div>
+              </button>
+            ))}
           </div>
-        ))}
-      </section>
+        </section>
 
-      <section className="section">
-        <div className="section__head">
-          <h2 className="section__title">远程访问</h2>
-        </div>
-        <div className="prose">
-          <p>
-            默认只监听 <span className="mono">127.0.0.1</span>。手机要用，先
-            <span className="mono"> pnpm passwd </span>
-            设密码，再用 <span className="mono">AGENTCTL_HOST=0.0.0.0 pnpm start</span>{' '}
-            启动；没有密码时服务会拒绝绑定非回环地址。
-          </p>
-          <p>
-            跨公网别裸跑明文 HTTP。套一层 HTTPS 反代，或者在
-            <span className="mono"> ~/.agentctl/config.yaml </span>
-            里配置 <span className="mono">tls.cert</span> 与
-            <span className="mono"> tls.key</span>；Tailscale 之类的隧道也可以。
-          </p>
-          <p>
-            配置与索引都在 <span className="mono">~/.agentctl/</span>。
-            <span className="mono"> index.db </span>
-            随时可以删，删掉只是重新扫一遍，agent 自己的会话文件不会被改动。
-          </p>
-        </div>
-      </section>
-      </main>
-    </div>
+        <section className="card section">
+          <div className="section__head">
+            <h2 className="section__title">套餐额度</h2>
+            <span className="section__hint num">
+              用到 {quota.data?.warnPercent ?? 80}% 时在会话列表和会话页提醒（<span className="mono">quotaWarnPercent</span>）；每 10 分钟查一次，不花钱
+            </span>
+          </div>
+          {quota.data?.agents.length ? (
+            <div className="quota-grid">
+              {quota.data.agents.map((q) => (
+                <QuotaAgent key={q.agent} q={q} warn={quota.data!.warnPercent} />
+              ))}
+            </div>
+          ) : (
+            <p className="section__empty">{quota.error || '正在查询…'}</p>
+          )}
+        </section>
+
+        <section className="card section">
+          <div className="section__head">
+            <h2 className="section__title">Agent</h2>
+          </div>
+          <div className="agentlist">
+            {agents.map((a) => (
+              <div className="agentrow" key={a.id}>
+                <AgentBadge agent={a.id} />
+                <div className="agentrow__main">
+                  <div className="agentrow__name">
+                    {AGENT_LABEL[a.id]}
+                    <span className={`status${a.available ? ' is-ok' : ''}`}>
+                      <span className="status__dot" aria-hidden="true" />
+                      {a.available ? '命令行可用' : '命令行未安装'}
+                    </span>
+                  </div>
+                  <div className="agentrow__meta num">
+                    <span>{a.sessionCount} 个会话</span>
+                    <span>{LIVE_LABEL[String(a.capabilities.live)]}</span>
+                    <span className="mono">{homeShorten(a.dataDir)}</span>
+                    {a.binaryPath ? <span className="mono">{homeShorten(a.binaryPath)}</span> : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {stats ? (
+          <section className="card section">
+            <div className="section__head">
+              <h2 className="section__title">索引</h2>
+              <span className="section__hint">
+                <span className="mono">~/.agentctl/index.db</span> 随时可以删，删掉只是重新扫一遍
+              </span>
+            </div>
+            <dl className="statgrid num">
+              <div>
+                <dt>会话</dt>
+                <dd>{stats.sessions}</dd>
+              </div>
+              <div>
+                <dt>累计花费</dt>
+                <dd>{formatCost(stats.totalCostUsd) || '—'}</dd>
+              </div>
+              <div>
+                <dt>磁盘占用</dt>
+                <dd>{formatBytes(stats.totalBytes)}</dd>
+              </div>
+              <div>
+                <dt>最近活动</dt>
+                <dd>{formatDateTime(stats.latestAt)}</dd>
+              </div>
+            </dl>
+          </section>
+        ) : null}
+
+        <section className="card section">
+          <div className="section__head">
+            <h2 className="section__title">远程访问</h2>
+          </div>
+          <div className="prose">
+            <p>
+              默认只监听 <span className="mono">127.0.0.1</span>。手机要用，先 <span className="mono">pnpm passwd</span> 设密码，再把
+              <span className="mono"> host </span>改成 Tailscale 地址或 <span className="mono">0.0.0.0</span>；没有密码时服务会拒绝绑定非回环地址。
+            </p>
+            <p>
+              跨公网别裸跑明文 HTTP。套一层 HTTPS 反代，或者配置 <span className="mono">tls.cert</span> 与 <span className="mono">tls.key</span>；Tailscale
+              之类的隧道本身已经加密。
+            </p>
+          </div>
+        </section>
+      </div>
+    </AppShell>
   );
 }

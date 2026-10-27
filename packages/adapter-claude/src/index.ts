@@ -13,6 +13,7 @@ import {
   type AgentAdapter,
   type EventWindow,
   type ModelInfo,
+  type QuotaSnapshot,
   type ReplayOptions,
   type SearchHit,
   type SearchQuery,
@@ -24,7 +25,7 @@ import {
   type UsageBucket,
 } from '@agentctl/core';
 import { harvest, isHumanPrompt, parseLine, turnIndexOf, type Facts, type ParseCtx } from './parse.ts';
-import { probeModels, startClaudeRun } from './live.ts';
+import { probeModels, probeQuota, startClaudeRun } from './live.ts';
 import { claudeUsage, CostLedger, ratesFrom } from './usage.ts';
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -215,6 +216,10 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     return { turns, costUsd: ledger.total || session.costUsd, preview };
+  }
+
+  quota(binary?: string): Promise<QuotaSnapshot> {
+    return probeQuota(binary);
   }
 
   /** discover 读尾部时拿到的各会话最后一次记账，给还没记账的回复估价用 */

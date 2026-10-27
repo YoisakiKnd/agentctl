@@ -39,6 +39,8 @@ class Run {
   sessionId = '';
   error?: string;
   handle!: RunHandle;
+  /** 一轮跑完（running → idle）时调用；用来刷新套餐额度 */
+  onTurnEnd?: () => void;
   private readonly log: LiveMessage[] = [];
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Set<string>();
@@ -73,6 +75,7 @@ class Run {
       if (msg.model && !this.model) this.model = msg.model;
     }
     if (msg.type === 'state') {
+      if (this.state === 'running' && msg.state === 'idle') this.onTurnEnd?.();
       this.state = msg.state;
       if (msg.sessionId) this.sessionId = msg.sessionId;
       if (msg.error) this.error = msg.error;
@@ -134,15 +137,18 @@ export interface StartOptions {
 export class RunManager {
   private readonly runs = new Map<string, Run>();
   private readonly onExit: (run: RunInfo) => void;
+  private readonly onTurnEnd: (run: RunInfo) => void;
 
-  constructor(onExit: (run: RunInfo) => void = () => undefined) {
+  constructor(onExit: (run: RunInfo) => void = () => undefined, onTurnEnd: (run: RunInfo) => void = () => undefined) {
     this.onExit = onExit;
+    this.onTurnEnd = onTurnEnd;
   }
 
   start(opts: StartOptions): Run {
     if (!opts.adapter.run) throw new Error(`${opts.adapter.meta.name} 尚未支持实时运行`);
     const run = new Run(opts.adapter.id, opts.cwd, opts.title, opts.model, opts.permissionMode, opts.effort);
     if (opts.resumeSessionId) run.sessionId = opts.resumeSessionId;
+    run.onTurnEnd = () => this.onTurnEnd(run.info());
     this.runs.set(run.id, run);
 
     run.handle = opts.adapter.run(

@@ -3,6 +3,7 @@ import type { ApprovalDecision, Item, UnifiedEvent } from '../types';
 import type { Draft } from '../live';
 import { clockTime, formatTokens } from '../format';
 import Markdown from './Markdown';
+import Icon, { type IconName } from './Icon';
 
 function firstLine(text: string, max = 140): string {
   const line = text.split('\n').find((l) => l.trim()) ?? '';
@@ -10,12 +11,23 @@ function firstLine(text: string, max = 140): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
+/** 工具名 → 图标：命令、文件、搜索、网页、子代理各一类 */
+function toolIcon(name: string): IconName {
+  const n = name.toLowerCase();
+  if (/bash|exec|shell|command|run|terminal/.test(n)) return 'terminal';
+  if (/edit|write|patch|file|read|notebook/.test(n)) return 'file';
+  if (/grep|glob|search|find|ls/.test(n)) return 'search';
+  if (/web|fetch|url|browser/.test(n)) return 'globe';
+  if (/task|agent|todo|plan/.test(n)) return 'spark';
+  return 'chevron';
+}
+
 function MediaChips({ item }: { item: Extract<Item, { kind: 'text' }> }) {
   if (!item.media?.length) return null;
   return (
     <div className="chips">
       {item.media.map((m, i) => (
-        <span className="chip" key={i}>
+        <span className="pill" key={i}>
           {m.kind === 'image' ? '图片' : '附件'} {Math.max(1, Math.round(m.bytes / 1024))}KB
         </span>
       ))}
@@ -50,10 +62,10 @@ function collectUsage(events: UnifiedEvent[]): Map<number, TurnUsage> {
 function UsageLine({ u }: { u: TurnUsage }) {
   return (
     <span className="turn__usage num">
-      {u.model ? <span className="turn__model">{u.model}</span> : null}
-      {u.input > 0 ? <span>入 {formatTokens(u.input)}</span> : null}
-      <span>出 {formatTokens(u.output)}</span>
-      {u.cacheRead > 0 ? <span>缓存 {formatTokens(u.cacheRead)}</span> : null}
+      {u.model ? <span className="turn__model mono">{u.model}</span> : null}
+      {u.input > 0 ? <span title="新输入 token">↑ {formatTokens(u.input)}</span> : null}
+      <span title="输出 token">↓ {formatTokens(u.output)}</span>
+      {u.cacheRead > 0 ? <span title="缓存读 token">缓存 {formatTokens(u.cacheRead)}</span> : null}
     </span>
   );
 }
@@ -132,6 +144,7 @@ function QuestionForm({
   return (
     <div className={`approval approval--${item.state}`}>
       <div className="approval__head">
+        <Icon name="chat" size={15} />
         <span className="tool__name">提问</span>
         <span className="approval__state">{pending ? '等你回答' : item.state === 'approved' ? '已回答' : '已跳过'}</span>
       </div>
@@ -228,6 +241,7 @@ function ToolApproval({ item, onDecide }: { item: Extract<Item, { kind: 'approva
   return (
     <div className={`approval approval--${item.state}`}>
       <div className="approval__head">
+        <Icon name="alert" size={15} />
         <span className="tool__name">{item.tool}</span>
         <span className="approval__state">{APPROVAL_STATE[item.state]}</span>
       </div>
@@ -288,9 +302,16 @@ function DiffBody({ patch }: { patch: string }) {
 function renderItem(item: Item, onDecide?: DecideFn) {
   switch (item.kind) {
     case 'text':
-      return (
+      return item.role === 'user' ? (
+        <div className="bubble">
+          <div className="msg">
+            <Markdown text={item.text} />
+          </div>
+          <MediaChips item={item} />
+        </div>
+      ) : (
         <>
-          <div className={item.role === 'user' ? 'msg msg--user' : 'msg'}>
+          <div className="msg">
             <Markdown text={item.text} />
           </div>
           <MediaChips item={item} />
@@ -301,8 +322,9 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       return (
         <details className="fold fold--think">
           <summary>
+            <Icon name="spark" size={14} className="fold__icon" />
             <span className="fold__tag">思考</span>
-            {item.durationMs ? <span className="fold__meta num">{item.durationMs}ms</span> : null}
+            {item.durationMs ? <span className="fold__meta num">{(item.durationMs / 1000).toFixed(1)}s</span> : null}
             <span className="fold__preview">{firstLine(item.text, 90)}</span>
           </summary>
           <div className="fold__body">{item.text}</div>
@@ -313,6 +335,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       return (
         <details className="fold fold--tool">
           <summary>
+            <Icon name={toolIcon(item.name)} size={14} className="fold__icon" />
             <span className="tool__name">{item.name}</span>
             <span className="fold__preview mono">{item.summary ?? ''}</span>
           </summary>
@@ -324,7 +347,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       return (
         <details className={`fold fold--result${item.ok ? '' : ' is-error'}`}>
           <summary>
-            <span className="result__mark">{item.ok ? '✓' : '✗'}</span>
+            <Icon name={item.ok ? 'check' : 'x'} size={13} className="fold__icon" />
             <span className="fold__preview mono">{firstLine(item.output) || '（无输出）'}</span>
             {item.truncated ? <span className="fold__meta">已截断</span> : null}
           </summary>
@@ -333,18 +356,24 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       );
 
     case 'notice':
-      return <div className={`notice notice--${item.level}`}>{item.text}</div>;
+      return (
+        <div className={`notice notice--${item.level}`}>
+          <Icon name={item.level === 'info' ? 'dot' : 'alert'} size={13} />
+          <span>{item.text}</span>
+        </div>
+      );
 
     case 'diff':
       return (
         <div className="diff">
           {item.files.map((f) => (
-            <details className="fold diff__file" key={f.path}>
+            <details className="fold fold--diff" key={f.path}>
               <summary>
-                <span className="tool__name">改动</span>
+                <Icon name="file" size={14} className="fold__icon" />
                 <span className="fold__preview mono">{f.path}</span>
                 <span className="diff__stat num">
-                  <span className="diff__add">+{f.added}</span> <span className="diff__del">−{f.removed}</span>
+                  <span className="diff__add">+{f.added}</span>
+                  <span className="diff__del">−{f.removed}</span>
                 </span>
               </summary>
               {f.patch ? <DiffBody patch={f.patch} /> : null}
@@ -372,6 +401,7 @@ function DraftRow({ draft }: { draft: Draft }) {
       <div className="ev__body">
         {draft.block === 'thinking' ? (
           <div className="draft draft--think">
+            <Icon name="spark" size={14} />
             <span className="fold__tag">思考中</span> {firstLine(draft.text.slice(-400), 120)}
           </div>
         ) : (
@@ -418,12 +448,15 @@ export default function Timeline({
           <Fragment key={ev.uid ?? ev.seq}>
             {showTurn ? (
               <div className="turn">
-                <span className="turn__n num">{ev.turn}</span>
+                <span className="turn__n num">第 {ev.turn} 轮</span>
                 <span className={`turn__rule${ev.turn === newestTurn ? ' is-newest' : ''}`} />
                 {usage.has(ev.turn) ? <UsageLine u={usage.get(ev.turn)!} /> : null}
               </div>
             ) : null}
-            <div className={`ev ev--${ev.item.kind}${ev.seq === highlight ? ' is-hit' : ''}`} data-seq={ev.seq}>
+            <div
+              className={`ev ev--${ev.item.kind}${ev.item.kind === 'text' ? ` ev--${ev.item.role}` : ''}${ev.seq === highlight ? ' is-hit' : ''}`}
+              data-seq={ev.seq}
+            >
               <div className="ev__gutter num">{showClock ? clock : ''}</div>
               <div className="ev__body">{renderItem(ev.item, onDecide)}</div>
             </div>

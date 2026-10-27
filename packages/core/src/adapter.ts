@@ -71,6 +71,8 @@ export interface AgentAdapter {
   resumeArgs?(session: SessionSummary): string[];
   /** 可选：该 agent 命令行当前能用的模型（与终端里 /model 看到的一致） */
   models?(binary?: string): Promise<ModelInfo[]>;
+  /** 可选：订阅套餐的剩余额度（5 小时 / 每周窗口）。由命令行自己去问，不调用模型 */
+  quota?(binary?: string): Promise<QuotaSnapshot>;
   /** 可选：启动一次实时运行（新建或续接）。capabilities.live 为 false 的适配器不实现 */
   run?(req: RunRequest, sink: RunSink): RunHandle;
 }
@@ -153,4 +155,30 @@ export interface RunHandle {
   /** 结束进程 */
   stop(): void;
   exited: Promise<{ code: number | null; signal: string | null }>;
+}
+
+/* ── 套餐额度 ─────────────────────────────────────────────── */
+
+/** 一个限额窗口（例如 5 小时、每周） */
+export interface QuotaWindow {
+  /** 稳定的键：five_hour / seven_day / seven_day_opus … */
+  id: string;
+  /** 给人看的名字：「5 小时」「每周」 */
+  label: string;
+  /** 已用百分比 0–100（可能超过 100） */
+  usedPercent: number;
+  /** 什么时候重置（ISO） */
+  resetsAt?: string;
+  windowMinutes?: number;
+}
+
+/** 订阅套餐的额度快照：由 agent 命令行自己去问（不发消息、不花钱） */
+export interface QuotaSnapshot {
+  /** 套餐名：pro / max / plus … */
+  plan?: string;
+  windows: QuotaWindow[];
+  /** 套餐外的额外额度 / 余额 */
+  credits?: { enabled: boolean; balance?: string; unlimited?: boolean; usedPercent?: number };
+  /** 当前已经被限流（发消息会被拒） */
+  blocked?: boolean;
 }

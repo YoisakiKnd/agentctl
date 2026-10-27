@@ -12,6 +12,7 @@ import Usage from './pages/Usage';
 // xterm 体积不小，只有打开终端时才加载
 const Shell = lazy(() => import('./pages/Shell'));
 import Login from './pages/Login';
+import { Logo } from './components/Layout';
 
 export default function App() {
   const route = useRoute();
@@ -31,7 +32,7 @@ export default function App() {
   if (!me) {
     return (
       <div className="splash">
-        <span className="splash__mark">agentctl</span>
+        <Logo size={28} />
       </div>
     );
   }
@@ -54,7 +55,7 @@ export default function App() {
 
   if (route.name === 'shell') {
     return (
-      <Suspense fallback={<div className="splash"><span className="splash__mark">agentctl</span></div>}>
+      <Suspense fallback={<div className="splash"><Logo size={28} /></div>}>
         <Shell id={route.id} kind={route.kind} />
       </Suspense>
     );

@@ -18,6 +18,8 @@ import {
   type RunSink,
   type RunState,
   type UnifiedEvent,
+  type QuotaSnapshot,
+  type QuotaWindow,
 } from '@agentctl/core';
 import { normalizeLiveItem, parseLine, type ParseCtx } from './parse.ts';
 
@@ -25,7 +27,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.5.0' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.7.0' };
 
 /** 网页的权限模式 → Codex 的审批策略 + 沙箱。没有 acceptEdits 的对应物，按 auto 处理 */
 const POLICY: Record<PermissionMode, { approval: string; sandbox: string; sandboxPolicy: Rec }> = {
@@ -397,6 +399,53 @@ export async function probeCodexModels(binary?: string, timeoutMs = 20_000): Pro
       },
       ...models,
     ];
+  } finally {
+    clearTimeout(timer);
+    rpc.child.stdin.end();
+    rpc.child.kill();
+  }
+}
+
+/** 窗口时长 → 名字；Codex 目前是 300 分钟与 10080 分钟两档 */
+function windowLabel(mins: number | undefined): string {
+  if (mins === 300) return '5 小时';
+  if (mins === 10080) return '每周';
+  if (!mins) return '额度';
+  return mins % 1440 === 0 ? `${mins / 1440} 天` : mins % 60 === 0 ? `${mins / 60} 小时` : `${mins} 分钟`;
+}
+
+/** 套餐额度：app-server 的 account/rateLimits/read，和 Codex 自己 /status 看到的一致；不调用模型 */
+export async function probeCodexQuota(binary?: string, timeoutMs = 20_000): Promise<QuotaSnapshot> {
+  const rpc = spawnJsonRpc(binary ?? 'codex', ['app-server']);
+  const timer = setTimeout(() => rpc.child.kill(), timeoutMs);
+  try {
+    await rpc.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null });
+    rpc.notify('initialized');
+    const res = await rpc.request('account/rateLimits/read', {});
+    const rl = (res.rateLimits ?? {}) as Rec;
+    const windows: QuotaWindow[] = [];
+    for (const [id, w] of [['primary', rl.primary], ['secondary', rl.secondary]] as const) {
+      const win = w as Rec | null | undefined;
+      if (!win || typeof win.usedPercent !== 'number') continue;
+      const mins = typeof win.windowDurationMins === 'number' ? win.windowDurationMins : undefined;
+      windows.push({
+        id: mins === 300 ? 'five_hour' : mins === 10080 ? 'seven_day' : id,
+        label: windowLabel(mins),
+        usedPercent: win.usedPercent,
+        resetsAt: typeof win.resetsAt === 'number' ? new Date(win.resetsAt * 1000).toISOString() : undefined,
+        windowMinutes: mins,
+      });
+    }
+    const credits = (rl.credits ?? {}) as Rec;
+    return {
+      plan: typeof rl.planType === 'string' ? rl.planType : undefined,
+      windows,
+      credits:
+        credits.hasCredits === true || credits.unlimited === true
+          ? { enabled: true, balance: typeof credits.balance === 'string' ? credits.balance : undefined, unlimited: credits.unlimited === true }
+          : undefined,
+      blocked: res.ordinaryUsageAllowed === false || (rl.rateLimitReachedType !== null && rl.rateLimitReachedType !== undefined),
+    };
   } finally {
     clearTimeout(timer);
     rpc.child.stdin.end();

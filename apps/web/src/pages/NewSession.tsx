@@ -4,6 +4,9 @@ import { isSubmitKey, RunOptionFields } from '../components/Composer';
 import { homeShorten, projectName } from '../format';
 import { navigate, sessionHref } from '../router';
 import { AGENT_LABEL, type AgentId, type AgentInfo, type SessionSummary } from '../types';
+import { AgentBadge } from '../components/AgentBadge';
+import Icon from '../components/Icon';
+import AppShell from '../components/Layout';
 
 /** 在某个目录里新开一个会话（Claude Code / Codex） */
 export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { cwd?: string; agent?: AgentId }) {
@@ -59,29 +62,17 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
   };
 
   return (
-    <div className="shell">
-      <aside className="spine">
-        <div className="spine__brand">agentctl</div>
-        <nav className="spine__agents">
-          <a className="nav" href="#/">
-            <span className="nav__label">会话</span>
-          </a>
-          <span className="nav is-active" style={{ '--agent': `var(--${agent})` } as React.CSSProperties}>
-            <span className="nav__label">新会话</span>
-          </span>
-        </nav>
-      </aside>
-
-      <main className="board board--narrow">
-        <header className="board__head">
-          <h1 className="board__title">新会话 · {AGENT_LABEL[agent]}</h1>
-          <a className="linkbtn board__back" href="#/">
-            返回会话
-          </a>
+    <AppShell active="new" title="新会话">
+      <div className="narrow">
+        <header className="pagehead">
+          <div className="pagehead__text">
+            <h1 className="pagehead__title">新会话</h1>
+            <p className="pagehead__sub">选一个 agent 和工作目录，写下第一条消息。会话照常写进 agent 自己的目录，终端里也能接着聊。</p>
+          </div>
         </header>
 
         <form
-          className="newform"
+          className="card form"
           onSubmit={(e) => {
             e.preventDefault();
             void start();
@@ -90,20 +81,21 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           {agents.length > 1 ? (
             <div className="field">
               <span className="field__label">Agent</span>
-              <div className="newform__recent">
+              <div className="agentpick">
                 {agents.map((a) => (
                   <button
                     type="button"
                     key={a.id}
-                    className={`chip chip--btn${a.id === agent ? ' is-on' : ''}`}
-                    style={{ '--agent': `var(--${a.id})` } as React.CSSProperties}
+                    className={`agentpick__opt${a.id === agent ? ' is-on' : ''}`}
+                    aria-pressed={a.id === agent}
                     onClick={() => {
                       setAgent(a.id);
                       // 模型和权限选项各家不同，换 agent 时回到默认
                       setOpts({});
                     }}
                   >
-                    {AGENT_LABEL[a.id]}
+                    <AgentBadge agent={a.id} />
+                    <span>{AGENT_LABEL[a.id]}</span>
                   </button>
                 ))}
               </div>
@@ -111,7 +103,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           ) : null}
 
           <label className="field">
-            <span className="field__label">工作目录（agent 会在这里读写文件、执行命令）</span>
+            <span className="field__label">工作目录 <span className="field__hint">agent 会在这里读写文件、执行命令</span></span>
             <input
               className="input mono"
               list="recent-cwds"
@@ -129,15 +121,16 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           </label>
 
           {recent.length > 0 ? (
-            <div className="newform__recent">
-              {recent.slice(0, 8).map((c) => (
+            <div className="pillrow">
+              {recent.slice(0, 10).map((c) => (
                 <button
                   type="button"
                   key={c}
-                  className={`chip chip--btn${c === cwd ? ' is-on' : ''}`}
+                  className={`pill pill--btn${c === cwd ? ' is-on' : ''}`}
                   onClick={() => setCwd(c)}
                   title={homeShorten(c)}
                 >
+                  <Icon name="folder" size={12} />
                   {projectName(c)}
                 </button>
               ))}
@@ -147,8 +140,8 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           <label className="field">
             <span className="field__label">第一条消息</span>
             <textarea
-              className="input newform__prompt"
-              rows={6}
+              className="input form__prompt"
+              rows={7}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={(e) => {
@@ -158,25 +151,28 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                   void start();
                 }
               }}
-              placeholder="想让它做什么？"
+              placeholder="想让它做什么？（Ctrl / ⌘ + Enter 开始）"
               autoFocus
             />
           </label>
 
-          <div className="newform__actions">
-            <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
+          <div className="form__actions">
+            <div className="form__opts">
+              <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
+            </div>
             <button className="btn btn--primary" type="submit" disabled={busy || !cwd.trim() || !prompt.trim()}>
               {busy ? '启动中…' : '开始'}
+              {busy ? null : <Icon name="send" size={14} />}
             </button>
           </div>
-          {error ? <div className="login__error">{error}</div> : null}
-          <p className="newform__note">
-            会话照常写进 <span className="mono">{agent === 'codex' ? '~/.codex/sessions' : '~/.claude/projects'}</span>
-            ，之后在终端里
-            <span className="mono"> {agent === 'codex' ? 'codex resume' : 'claude --resume'} </span>也能接着聊。
-          </p>
+          {error ? <div className="form__error">{error}</div> : null}
         </form>
-      </main>
-    </div>
+        <p className="form__note">
+          会话照常写进 <span className="mono">{agent === 'codex' ? '~/.codex/sessions' : agent === 'dsh' ? '~/.dsh/sessions' : '~/.claude/projects'}</span>
+          ，之后在终端里
+          <span className="mono"> {agent === 'codex' ? 'codex resume' : agent === 'dsh' ? 'dsh' : 'claude --resume'} </span>也能接着聊。
+        </p>
+      </div>
+    </AppShell>
   );
 }

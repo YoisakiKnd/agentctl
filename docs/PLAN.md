@@ -448,3 +448,17 @@ M1 剩余：partial 输出在打断时的保留。
 为什么不用固定价格表：Claude Code 记的每 token 单价随上下文长度、缓存时长浮动（本机实测 opus 加权单价在 2.4–3.0 之间），自己算会和它的账对不上；直接分摊它的记账，总数永远一致。
 
 M4 剩余：Cursor（本机未安装，无数据）。
+
+## 18. 0.7.0：套餐额度、界面重做、终端连接
+
+| 项 | 实现 / 实测 |
+|---|---|
+| Claude 额度 | stream-json 进程里发 `initialize` + `get_usage {skip_behaviors:true}` 控制请求，取 `rate_limits.limits`（kind / percent / resets_at）；约 0.7s，不产生会话文件、不调模型。SDK 把它标为实验接口，取不到时保留上次结果并显示原因 |
+| Codex 额度 | `codex app-server` 的 `account/rateLimits/read`：primary（300 分钟）/ secondary（10080 分钟）的 usedPercent 与 resetsAt、planType、credits；约 1s |
+| 刷新策略 | 服务端 `QuotaService` 内存缓存，启动 5 秒后 + 每 10 分钟一次；一轮结束（running → idle）3 秒后刷新该 agent；手动刷新 30 秒内去重 |
+| 界面 | 重写 styles.css：token 化的深浅两套色，`<html data-theme>`；首帧前由 index.html 内联脚本定主题。共用外壳 `AppShell`，会话列表 / 额度用 `useSyncExternalStore` 的共享轮询 store，多个组件只发一次请求 |
+| 身份色 | Codex 的 `#178f80` 与其余三色在新深色底（#151820）和浅色底（#ffffff）上都通过亮度带、色度、色弱相邻差、对比度校验 |
+| 终端快照 | `@xterm/headless` + `@xterm/addon-serialize`：pty 输出同时写进无界面终端；接上时先按新窗口尺寸 resize，再在 `write('', cb)` 回调里序列化（含 2000 行滚动历史），其间的新输出排队补发。实测 less 打开时刷新页面、换窗口尺寸重开，画面完整 |
+| 心跳 | 服务端每 20 秒协议级 ping + 应用层 `{type:'ping'}`，两轮无 pong 断开；浏览器 50 秒没收到任何消息就丢弃旧连接立即重连，`visibilitychange` / `online` 时也检查 |
+
+M4 剩余：Cursor（本机未安装，无数据）。

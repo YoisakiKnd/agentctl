@@ -4,6 +4,10 @@ import { formatTokens, projectName, timeAgo } from '../format';
 import { navigate, sessionHref, usageHref } from '../router';
 import type { AgentId, UsageReport, UsageTotals } from '../types';
 import { AGENT_LABEL } from '../types';
+import AppShell from '../components/Layout';
+import { AgentBadge } from '../components/AgentBadge';
+import { QuotaAgent } from '../components/Quota';
+import { useQuota } from '../store';
 
 /** 堆叠顺序固定：颜色跟着 agent 走，筛选后剩下的不会变色 */
 const AGENTS: AgentId[] = ['claude', 'codex', 'dsh', 'pi', 'cursor'];
@@ -264,51 +268,53 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
   const activeDays = data ? new Set(data.daily.map((d) => d.day)).size : 0;
 
   return (
-    <div className="shell">
-      <aside className="spine">
-        <div className="spine__brand">agentctl</div>
-        <nav className="spine__agents">
-          <a className="nav" href="#/">
-            <span className="nav__label">会话</span>
-          </a>
-          <span className="nav is-active" style={{ '--agent': 'var(--text)' } as React.CSSProperties}>
-            <span className="nav__label">用量</span>
-          </span>
-        </nav>
-      </aside>
-
-      <main className="board">
-        <header className="board__head">
-          <h1 className="board__title">用量统计</h1>
-          <div className="usage__ranges" role="group" aria-label="时间范围">
-            {RANGES.map((r) => (
-              <button
-                key={r.days}
-                type="button"
-                className={`chip chip--btn${r.days === days ? ' is-on' : ''}`}
-                onClick={() => navigate(usageHref(r.days, agent).slice(1))}
-              >
-                {r.label}
-              </button>
-            ))}
+    <AppShell active="usage" title="用量">
+        <header className="pagehead">
+          <div className="pagehead__text">
+            <h1 className="pagehead__title">用量统计</h1>
+            <p className="pagehead__sub">各 agent 自己记在会话文件里的 token 与花费，按天汇总。</p>
+          </div>
+          <div className="pagehead__actions">
+            <div className="segmented" role="tablist" aria-label="时间范围">
+              {RANGES.map((r) => (
+                <button
+                  key={r.days}
+                  type="button"
+                  role="tab"
+                  aria-selected={r.days === days}
+                  className={r.days === days ? 'is-on' : ''}
+                  onClick={() => navigate(usageHref(r.days, agent).slice(1))}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
           </div>
         </header>
 
-        <div className="search__filters">
-          {[undefined, ...AGENTS.filter((a) => a !== 'cursor')].map((a) => (
-            <button
-              key={a ?? 'all'}
-              type="button"
-              className={`chip chip--btn${agent === a ? ' is-on' : ''}`}
-              onClick={() => navigate(usageHref(days, a).slice(1))}
-            >
-              {a ? AGENT_LABEL[a] : '全部 agent'}
-            </button>
-          ))}
+        <QuotaCards />
+
+        <div className="filters">
+          <div className="segmented" role="tablist" aria-label="按 agent 筛选">
+            {[undefined, ...AGENTS.filter((a) => a !== 'cursor')].map((a) => (
+              <button
+                key={a ?? 'all'}
+                type="button"
+                role="tab"
+                aria-selected={agent === a}
+                className={agent === a ? 'is-on' : ''}
+                style={a ? ({ '--agent': `var(--${a})` } as React.CSSProperties) : undefined}
+                onClick={() => navigate(usageHref(days, a).slice(1))}
+              >
+                {a ? <span className="segmented__dot" aria-hidden="true" /> : null}
+                {a ? AGENT_LABEL[a] : '全部 agent'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {error ? <div className="empty empty--error">{error}</div> : null}
-        {busy && !data ? <div className="search__status">正在统计所有会话，第一次要完整扫一遍，可能要几秒…</div> : null}
+        {busy && !data ? <div className="statusline">正在统计所有会话，第一次要完整扫一遍，可能要几秒…</div> : null}
 
         {data && t ? (
           <div className={busy ? 'is-stale' : undefined}>
@@ -337,25 +343,18 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
               </div>
             </dl>
 
-            <section className="section">
+            <section className="card section">
               <div className="section__head">
                 <h2 className="section__title">每天</h2>
-                <div className="usage__metric" role="group" aria-label="指标">
-                  <button
-                    type="button"
-                    className={`chip chip--btn${metric === 'cost' ? ' is-on' : ''}`}
-                    onClick={() => setMetric('cost')}
-                    disabled={!hasCost}
-                  >
-                    花费
-                  </button>
-                  <button
-                    type="button"
-                    className={`chip chip--btn${metric === 'tokens' ? ' is-on' : ''}`}
-                    onClick={() => setMetric('tokens')}
-                  >
-                    token（输入 + 输出）
-                  </button>
+                <div className="usage__metric">
+                  <div className="segmented segmented--sm" role="tablist" aria-label="指标">
+                    <button type="button" role="tab" aria-selected={metric === 'cost'} className={metric === 'cost' ? 'is-on' : ''} onClick={() => setMetric('cost')} disabled={!hasCost}>
+                      花费
+                    </button>
+                    <button type="button" role="tab" aria-selected={metric === 'tokens'} className={metric === 'tokens' ? 'is-on' : ''} onClick={() => setMetric('tokens')}>
+                      token
+                    </button>
+                  </div>
                   <button type="button" className="linkbtn" onClick={() => setTable((v) => !v)}>
                     {table ? '看图' : '看表格'}
                   </button>
@@ -388,7 +387,7 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
               )}
             </section>
 
-            <section className="section">
+            <section className="card section">
               <div className="section__head">
                 <h2 className="section__title">按 agent</h2>
               </div>
@@ -410,7 +409,7 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
               </div>
             </section>
 
-            <section className="section">
+            <section className="card section">
               <div className="section__head">
                 <h2 className="section__title">按模型</h2>
               </div>
@@ -431,14 +430,14 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
               </div>
             </section>
 
-            <section className="section">
+            <section className="card section">
               <div className="section__head">
                 <h2 className="section__title">用得最多的会话</h2>
                 <span className="section__hint">{rangeLabel}内，前 {data.sessions.length} 个</span>
               </div>
               {data.sessions.map((s) => (
-                <a className="urow" key={s.id} href={sessionHref(s.id)} style={{ '--agent': `var(--${s.agent})` } as React.CSSProperties}>
-                  <span className="sess__rail" aria-hidden="true" />
+                <a className="urow" key={s.id} href={sessionHref(s.id)}>
+                  <AgentBadge agent={s.agent} size="sm" />
                   <span className="urow__title">{s.title}</span>
                   <span className="urow__val num">{s.costUsd !== undefined ? money(s.costUsd) : `${formatTokens(io(s))} token`}</span>
                   <span className="urow__meta num">
@@ -455,7 +454,21 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
             </p>
           </div>
         ) : null}
-      </main>
-    </div>
+    </AppShell>
+  );
+}
+
+/** 套餐额度：订阅制 agent 的 5 小时 / 每周窗口（Claude、Codex） */
+function QuotaCards() {
+  const { data } = useQuota();
+  if (!data?.agents.length) return null;
+  return (
+    <section className="quota-cards">
+      {data.agents.map((q) => (
+        <div className="card quota-card" key={q.agent}>
+          <QuotaAgent q={q} warn={data.warnPercent} />
+        </div>
+      ))}
+    </section>
   );
 }

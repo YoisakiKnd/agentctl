@@ -11,6 +11,7 @@ import type {
   SessionSummary,
   Stats,
   UsageReport,
+  QuotaReport,
 } from './types';
 
 export interface RunOptions {
@@ -107,6 +108,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(patch),
     }),
+  /** 套餐额度；force 让服务端立刻去问 CLI（30 秒内重复会用缓存） */
+  quota: (force?: boolean) => request<QuotaReport>(`/api/quota${force ? '?refresh=1' : ''}`),
   tags: () => request<{ tags: { tag: string; count: number }[] }>('/api/tags'),
   models: (agent: string) => request<{ models: ModelInfo[] }>(`/api/agents/${agent}/models`),
   setModel: (runId: string, model: string) =>

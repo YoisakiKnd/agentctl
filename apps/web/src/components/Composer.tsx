@@ -3,6 +3,7 @@ import type { RunOptions } from '../api';
 import { homeShorten } from '../format';
 import { useAllowBypass } from '../caps';
 import { EFFORT_LABEL, isAlias, modelLabel, useModels } from '../models';
+import Icon from './Icon';
 import type { AgentId, ModelInfo, PermissionMode, RunState } from '../types';
 
 interface ModeOption {
@@ -195,6 +196,7 @@ export default function Composer({
   runModels,
   onSetPermissionMode,
   warning,
+  notice,
 }: {
   agent: AgentId;
   path: string;
@@ -212,6 +214,8 @@ export default function Composer({
   onSetPermissionMode?: (mode: PermissionMode) => Promise<void>;
   /** 输入框上方的提醒（例如会话可能正在终端里使用） */
   warning?: string;
+  /** 输入框上方的额外内容（套餐额度提醒） */
+  notice?: React.ReactNode;
 }) {
   const [text, setText] = useState('');
   const [opts, setOpts] = useState<RunOptions>({});
@@ -255,71 +259,95 @@ export default function Composer({
 
   return (
     <footer className="composer">
-      {warning ? <div className="composer__warn">{warning}</div> : null}
-      {pending > 0 ? <div className="composer__alert">有 {pending} 个工具调用等待审批，见上方卡片</div> : null}
-      <div className="composer__box">
-        <textarea
-          ref={input}
-          className="composer__input"
-          rows={text.includes('\n') ? Math.min(8, text.split('\n').length) : 1}
-          placeholder={placeholder}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (isSubmitKey(e)) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        {working && onInterrupt ? (
-          <button className="btn btn--sm" onClick={() => void act(onInterrupt)} title="打断当前这一轮，进程保留">
-            打断
-          </button>
+      <div className="composer__inner">
+        {notice}
+        {warning ? (
+          <div className="composer__warn">
+            <Icon name="alert" size={14} />
+            {warning}
+          </div>
         ) : null}
-        <button className="btn btn--sm btn--primary" disabled={busy || !text.trim()} onClick={() => void submit()}>
-          {busy ? '发送中' : '发送'}
-        </button>
-      </div>
-      <div className="composer__meta">
-        <span className="composer__path mono" title={path}>
-          {homeShorten(path)}
-        </span>
-        {error ? <span className="composer__error">{error}</span> : null}
-        <span className="composer__opts">
-          {processAlive ? (
-            <>
-              {onSetModel ? (
-                <ModelSelect
-                  agent={agent}
-                  options={runModels}
-                  value={runModel ?? 'default'}
-                  disabled={switching}
-                  onChange={(m) => {
-                    setSwitching(true);
-                    void act(() => onSetModel(m)).finally(() => setSwitching(false));
-                  }}
-                />
-              ) : null}
-              {onSetPermissionMode ? (
-                <PermissionSelect
-                  agent={agent}
-                  value={runPermissionMode ?? 'default'}
-                  disabled={switching}
-                  onChange={(m) => {
-                    setSwitching(true);
-                    void act(() => onSetPermissionMode(m)).finally(() => setSwitching(false));
-                  }}
-                />
-              ) : null}
-              <button className="linkbtn" onClick={() => void act(onStop)} title="结束 agent 进程；会话仍可随时续接">
-                结束进程
+        {pending > 0 ? (
+          <div className="composer__alert">
+            <Icon name="alert" size={14} />有 {pending} 个工具调用等待审批，见上方卡片
+          </div>
+        ) : null}
+        <div className={`composer__card${working ? ' is-working' : ''}`} onClick={(e) => e.target === e.currentTarget && input.current?.focus()}>
+          <textarea
+            ref={input}
+            className="composer__input"
+            rows={text.includes('\n') ? Math.min(8, text.split('\n').length) : 1}
+            placeholder={placeholder}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (isSubmitKey(e)) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          <div className="composer__bar">
+            <span className="composer__opts">
+              {processAlive ? (
+                <>
+                  {onSetModel ? (
+                    <ModelSelect
+                      agent={agent}
+                      options={runModels}
+                      value={runModel ?? 'default'}
+                      disabled={switching}
+                      onChange={(m) => {
+                        setSwitching(true);
+                        void act(() => onSetModel(m)).finally(() => setSwitching(false));
+                      }}
+                    />
+                  ) : null}
+                  {onSetPermissionMode ? (
+                    <PermissionSelect
+                      agent={agent}
+                      value={runPermissionMode ?? 'default'}
+                      disabled={switching}
+                      onChange={(m) => {
+                        setSwitching(true);
+                        void act(() => onSetPermissionMode(m)).finally(() => setSwitching(false));
+                      }}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
+              )}
+            </span>
+            {working && onInterrupt ? (
+              <button className="btn btn--sm composer__interrupt" onClick={() => void act(onInterrupt)} title="打断当前这一轮，进程保留">
+                <Icon name="stop" size={13} filled />
+                打断
               </button>
-            </>
-          ) : (
-            <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
-          )}
-        </span>
+            ) : null}
+            <button
+              className="sendbtn"
+              disabled={busy || !text.trim()}
+              onClick={() => void submit()}
+              aria-label={busy ? '发送中' : '发送'}
+              title={coarse ? '发送' : '发送（Enter；Shift+Enter 换行）'}
+            >
+              <Icon name="send" size={17} />
+            </button>
+          </div>
+        </div>
+        <div className="composer__foot">
+          <span className="composer__path mono" title={path}>
+            <Icon name="folder" size={12} />
+            {homeShorten(path)}
+          </span>
+          {error ? <span className="composer__error">{error}</span> : null}
+          {processAlive && onStop ? (
+            <button className="linkbtn" onClick={() => void act(onStop)} title="结束 agent 进程；会话仍可随时续接">
+              结束进程
+            </button>
+          ) : null}
+        </div>
       </div>
     </footer>
   );

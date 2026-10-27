@@ -26,6 +26,8 @@ export interface Config {
    * 能登录的人本来就能在审批卡上点"允许"，所以默认开；想把网页端限制为必须审批时设为 false。
    */
   allowBypassPermissions: boolean;
+  /** 套餐额度用到这个百分比就在网页上提醒（5 小时 / 每周窗口任一） */
+  quotaWarnPercent: number;
   tls?: { cert: string; key: string };
   agents: Record<string, AgentConfig>;
 }
@@ -49,6 +51,7 @@ function defaults(): Config {
     cookieSecure: false,
     allowedRoots: [],
     allowBypassPermissions: true,
+    quotaWarnPercent: 80,
     agents: {
       claude: { enabled: true },
       codex: { enabled: true },

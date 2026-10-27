@@ -14,6 +14,7 @@ import {
   type EventWindow,
   type Line,
   type ModelInfo,
+  type QuotaSnapshot,
   type ReplayOptions,
   type RunHandle,
   type RunRequest,
@@ -24,7 +25,7 @@ import {
   type UnifiedEvent,
   type UsageBucket,
 } from '@agentctl/core';
-import { probeCodexModels, startCodexRun } from './live.ts';
+import { probeCodexModels, probeCodexQuota, startCodexRun } from './live.ts';
 import { humanPrompt, isTurnStart, parseLine, type ParseCtx } from './parse.ts';
 
 type Rec = Record<string, unknown>;
@@ -277,6 +278,10 @@ export class CodexAdapter implements AgentAdapter {
 
   resumeArgs(session: SessionSummary): string[] {
     return ['resume', session.sessionId];
+  }
+
+  quota(binary?: string): Promise<QuotaSnapshot> {
+    return probeCodexQuota(binary);
   }
 
   /** 只有 token，没有花费（Codex 按订阅计费，rollout 里不记价格） */

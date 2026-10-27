@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { sessionHref, shellHref } from '../router';
+import Icon from '../components/Icon';
+import { useTheme } from '../theme';
 import { AGENT_LABEL, type AgentId } from '../types';
 
 type Status = 'connecting' | 'open' | 'reconnecting' | 'exited' | 'error';
@@ -27,14 +29,54 @@ const KEYS: { label: string; seq: string }[] = [
   { label: '⇧Tab', seq: '\x1b[Z' },
 ];
 
-const THEME = {
-  background: '#1b1f2a',
-  foreground: '#e8e4da',
-  cursor: '#e0663a',
-  cursorAccent: '#1b1f2a',
-  selectionBackground: '#3a4458',
-  black: '#1b1f2a',
-  brightBlack: '#6b7484',
+/** 终端配色跟着网页主题走；16 色各给一套深浅两版，保证在各自底色上看得清 */
+const PALETTE = {
+  dark: {
+    background: '#0e1015',
+    foreground: '#e6e4df',
+    cursor: '#e0663a',
+    cursorAccent: '#0e1015',
+    selectionBackground: '#33405a',
+    black: '#1c2028',
+    red: '#e5675e',
+    green: '#7fc48f',
+    yellow: '#e2b85c',
+    blue: '#7aa2f7',
+    magenta: '#c49ae8',
+    cyan: '#5fc6c0',
+    white: '#c9ccd3',
+    brightBlack: '#6b7280',
+    brightRed: '#f08a82',
+    brightGreen: '#9fdcab',
+    brightYellow: '#f0cd7c',
+    brightBlue: '#9db9fa',
+    brightMagenta: '#d9b8f2',
+    brightCyan: '#86dcd6',
+    brightWhite: '#f2f1ee',
+  },
+  light: {
+    background: '#ffffff',
+    foreground: '#1f2329',
+    cursor: '#c4552b',
+    cursorAccent: '#ffffff',
+    selectionBackground: '#cfdcf5',
+    black: '#1f2329',
+    red: '#c0392b',
+    green: '#2e7d4f',
+    yellow: '#9a6a00',
+    blue: '#2f5fc4',
+    magenta: '#8a4bb5',
+    cyan: '#1a7f86',
+    white: '#6b7280',
+    brightBlack: '#8a909c',
+    brightRed: '#d9534f',
+    brightGreen: '#3c9a63',
+    brightYellow: '#b58200',
+    brightBlue: '#4876d6',
+    brightMagenta: '#a066c7',
+    brightCyan: '#2596a0',
+    brightWhite: '#3a3f47',
+  },
 };
 
 /**
@@ -48,6 +90,8 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
   const [status, setStatus] = useState<Status>('connecting');
   const [message, setMessage] = useState('');
   const [title, setTitle] = useState('');
+  const [line, setLine] = useState('');
+  const { theme } = useTheme();
 
   useEffect(() => {
     const el = host.current;
@@ -59,7 +103,7 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 5000,
-      theme: THEME,
+      theme: PALETTE[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'],
       allowProposedApi: false,
     });
     const fit = new FitAddon();
@@ -72,18 +116,36 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
     let finished = false; // 进程退出或服务端拒绝：不再重连
     let attempt = 0;
     let retryTimer: number | undefined;
+    /** 最后一次收到服务端消息的时间；服务端每 20 秒发一次 ping，太久没消息说明连接已经"半死" */
+    let lastSeen = Date.now();
 
     const send = (msg: unknown) => {
       const ws = socket.current;
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
     };
 
+    /** 放弃当前连接（不等它慢慢超时），马上重连 */
+    const reconnect = (delay: number) => {
+      const old = socket.current;
+      if (old) {
+        old.onclose = null;
+        old.onmessage = null;
+        old.close();
+      }
+      clearTimeout(retryTimer);
+      setStatus('reconnecting');
+      retryTimer = window.setTimeout(connect, delay);
+    };
+
     const connect = () => {
+      if (disposed || finished) return;
+      lastSeen = Date.now();
       const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
       const qs = new URLSearchParams({ kind, cols: String(term.cols), rows: String(term.rows) });
       const ws = new WebSocket(`${scheme}://${location.host}/api/sessions/${encodeURIComponent(id)}/shell?${qs}`);
       socket.current = ws;
       ws.onmessage = (e: MessageEvent<string>) => {
+        lastSeen = Date.now();
         let msg: { type: string; data?: string; code?: number; message?: string; shell?: { title?: string } };
         try {
           msg = JSON.parse(e.data) as typeof msg;
@@ -91,9 +153,11 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
           return;
         }
         switch (msg.type) {
+          case 'ping':
+            break;
           case 'ready':
             attempt = 0;
-            // 服务端接着会回放最近输出，先清屏避免重连后内容重复
+            // 服务端接着会发当前屏幕的快照，先清掉旧内容
             term.reset();
             setTitle(msg.shell?.title ?? '');
             setStatus('open');
@@ -117,11 +181,15 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
       };
       ws.onclose = () => {
         if (disposed || finished) return;
-        setStatus('reconnecting');
         attempt += 1;
-        retryTimer = window.setTimeout(connect, Math.min(1000 * attempt, 10_000));
+        reconnect(Math.min(1000 * attempt, 10_000));
       };
     };
+
+    const watchdog = window.setInterval(() => {
+      if (finished || socket.current?.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - lastSeen > 50_000) reconnect(0);
+    }, 5000);
 
     const input = term.onData((data) => send({ type: 'input', data }));
     const ro = new ResizeObserver(() => {
@@ -134,22 +202,31 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
     });
     ro.observe(el);
     // 手机从后台回来时 WebSocket 往往已经断了，立刻重连而不是等退避
+    // 切后台期间可能早就断了，但浏览器还没察觉：超过一个心跳周期没消息就直接重连
     const onVisible = () => {
       if (document.visibilityState !== 'visible' || finished) return;
-      if (socket.current?.readyState === WebSocket.CLOSED) {
-        clearTimeout(retryTimer);
+      const ws = socket.current;
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING || Date.now() - lastSeen > 25_000) {
         attempt = 0;
-        connect();
+        reconnect(0);
       }
     };
+    const onOnline = () => {
+      if (finished) return;
+      attempt = 0;
+      reconnect(0);
+    };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
     connect();
     term.focus();
 
     return () => {
       disposed = true;
       clearTimeout(retryTimer);
+      clearInterval(watchdog);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
       ro.disconnect();
       input.dispose();
       socket.current?.close();
@@ -157,6 +234,11 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
       termRef.current = null;
     };
   }, [id, kind]);
+
+  // 切换主题时终端跟着换色，不重连
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = PALETTE[theme];
+  }, [theme]);
 
   const press = (seq: string) => {
     const ws = socket.current;
@@ -172,47 +254,82 @@ export default function Shell({ id, kind }: { id: string; kind: 'agent' | 'shell
 
   const live = status === 'open';
 
+  /** 手机输入法（尤其中文）直接往 xterm 里打字不可靠：整行写好再发，末尾补回车 */
+  const sendLine = () => {
+    const ws = socket.current;
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'input', data: `${line}\r` }));
+    setLine('');
+  };
+
+  const isAgent = !(id.startsWith('dsh:') || id.startsWith('pi:'));
+
   return (
     <div className="term">
       <header className="term__bar">
-        <a className="btn btn--ghost btn--sm" href={sessionHref(id)} title="回到时间线">
-          ←
+        <a className="iconbtn" href={sessionHref(id)} title="回到时间线" aria-label="回到时间线">
+          <Icon name="back" />
         </a>
         <span className="term__title">{title || '终端'}</span>
-        <nav className="term__tabs">
+        <nav className="segmented segmented--sm term__tabs">
           {/* DSH、Pi 没有可续接的 TUI，只给 shell */}
-          {id.startsWith('dsh:') || id.startsWith('pi:') ? null : (
-            <a className={`term__tab${kind === 'agent' ? ' is-on' : ''}`} href={shellHref(id, 'agent')}>
+          {isAgent ? (
+            <a className={kind === 'agent' ? 'is-on' : ''} href={shellHref(id, 'agent')}>
               {AGENT_LABEL[id.split(':')[0] as AgentId] ?? 'Agent'}
             </a>
-          )}
-          <a className={`term__tab${kind === 'shell' ? ' is-on' : ''}`} href={shellHref(id, 'shell')}>
+          ) : null}
+          <a className={kind === 'shell' ? 'is-on' : ''} href={shellHref(id, 'shell')}>
             Shell
           </a>
         </nav>
-        <span className={`term__status${live ? ' is-live' : ''}`}>
-          {live ? <span className="live-dot" aria-hidden="true" /> : null}
+        <span className={`status${live ? ' is-live' : status === 'reconnecting' || status === 'connecting' ? ' is-pending' : ''}`}>
+          {live ? <span className="live-dot" aria-hidden="true" /> : <span className="status__dot" aria-hidden="true" />}
           {STATUS_LABEL[status]}
         </span>
         {live ? (
-          <button className="linkbtn" onClick={kill}>
+          <button className="btn btn--sm btn--danger-quiet" onClick={kill}>
             结束
           </button>
         ) : null}
         {status === 'exited' || status === 'error' ? (
-          <button className="linkbtn" onClick={() => location.reload()}>
+          <button className="btn btn--sm" onClick={() => location.reload()}>
+            <Icon name="refresh" size={13} />
             重新打开
           </button>
         ) : null}
       </header>
       {message ? <div className={`term__msg${status === 'error' ? ' is-error' : ''}`}>{message}</div> : null}
       <div className="term__screen" ref={host} />
-      <div className="term__keys">
-        {KEYS.map((k) => (
-          <button key={k.label} className="term__key" onClick={() => press(k.seq)} disabled={!live}>
-            {k.label}
+      <div className="term__mobile">
+        <div className="term__keys">
+          {KEYS.map((k) => (
+            <button key={k.label} className="term__key" onClick={() => press(k.seq)} disabled={!live}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+        <form
+          className="term__line"
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendLine();
+          }}
+        >
+          <input
+            className="input"
+            value={line}
+            onChange={(e) => setLine(e.target.value)}
+            placeholder="整行输入，发送时自动回车（适合中文输入法）"
+            enterKeyHint="send"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            disabled={!live}
+          />
+          <button className="sendbtn" type="submit" disabled={!live} aria-label="发送这一行">
+            <Icon name="send" size={16} />
           </button>
-        ))}
+        </form>
       </div>
     </div>
   );

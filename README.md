@@ -11,22 +11,24 @@
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **全文搜索**：一次扫所有 agent 的全部会话（不建索引），只匹配人能读到的内容（提问、回复、思考、命令、输出、diff），点结果直接跳到会话里的那一条并高亮。本机约 600MB 会话一次约 2.5 秒。
+- **套餐额度提醒**：Claude Code、Codex 的 5 小时 / 每周额度常驻侧栏，快用完时在会话列表和输入框上方提醒。数据由各自 CLI 提供，不花钱。
 - **用量统计**：每个 agent 每天花了多少钱、多少 token，按模型、按会话拆开看。Claude 的花费以它自己的记账为准，按回复摊到各天；Codex、DSH 只有 token。
 - **置顶、标签、改名**：给会话起自己的标题、打标签、置顶，看板按标签筛选。只存在 agentctl 的索引库里，不改 agent 的文件。
 - **改文件看 diff**：Claude 的 Edit / MultiEdit / Write、Codex 的 apply_patch / FileChange 都显示为可展开的着色 diff。
 - **会话看板**：按项目分组，显示标题、首条提问、轮数、花费、体积、最近活动时间；搜索标题/路径/首条消息；侧脊按 agent 过滤。
 - **时间线回放**：一轮一轮往下读，人类提问、助手文本（Markdown）、thinking、工具调用与结果、后台任务通知、每轮耗时与 token 用量、本轮模型。
 - **大文件不卡**：175MB / 13839 行的会话首屏 **约 20ms**（尾部优先按字节窗口读，向前翻页带游标）。
-- **手机可用**：窄屏切换成顶部横条 + 单列时间线，实测 390×844。
+- **手机可用**：侧栏收成抽屉，单列时间线，终端带快捷键条和整行输入框，实测 390×844。
+- **深色 / 浅色主题**：默认跟随系统，设置里可固定。
 - **远程可用**：默认只听 `127.0.0.1`；`--host 0.0.0.0` 必须先设密码，否则拒绝启动。
 
 ![网页里审批 Claude 的工具调用](docs/screens/approval.png)
 
 ![用量统计](docs/screens/usage.png)
 
-| 看板 | 时间线 |
+| 浅色主题 | 时间线 |
 |---|---|
-| ![看板](docs/screens/dashboard.png) | ![时间线](docs/screens/session.png) |
+| ![浅色看板](docs/screens/dashboard-light.png) | ![时间线](docs/screens/session.png) |
 
 | 手机看板 | 手机时间线 | 设置 |
 |---|---|---|
@@ -80,6 +82,7 @@ pnpm service:install                             # 构建前端 + 装成 systemd
 | `password` | — | `pnpm passwd` 写入的 scrypt 哈希 |
 | `allowedRoots` | `[]` | 网页端可作为工作目录的路径白名单，空表示不限 |
 | `allowBypassPermissions` | `true` | 设为 `false` 后网页端不提供「跳过所有权限」 |
+| `quotaWarnPercent` | `80` | 套餐额度用到这个百分比时在网页上提醒 |
 | `agents.<id>.enabled` | `true` | 关掉某个 agent（`claude` / `codex` / `dsh` / `pi`） |
 | `cookieSecure` | `false` | 放在 HTTPS 反代后面时打开 |
 | `tls.cert` / `tls.key` | — | 直接以 HTTPS 提供服务 |
@@ -176,6 +179,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/sessions/:id/events?after=` | 增量：从上次窗口末尾读到文件末尾（文件没变时只是一次 stat） |
 | GET | `/api/sessions/:id/events?through=` | 跳转：窗口以这个偏移所在的行结尾 |
 | GET | `/api/search?q=&agent=` | 全文搜索；最多 200 处、单会话 20 处、15 秒上限，超出时 `truncated: true` |
+| GET | `/api/quota?refresh=` | 套餐额度（Claude、Codex 的 5 小时 / 每周窗口）；`refresh=1` 立即去问 CLI |
 | GET | `/api/usage?days=&agent=` | 用量：按天 × agent、按 agent、按模型、前 20 个会话；`days=0` 为全部 |
 | POST | `/api/sessions/:id/annotation` | 注解 `{pinned?, tags?, title?}`，缺省字段不改，`title: ""` 恢复原标题 |
 | GET | `/api/tags` | 所有标签及使用次数 |
@@ -185,7 +189,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | POST | `/api/sessions/:id/send` | 往会话发消息：有活进程就写 stdin，否则 `--resume` 起一个 |
 | POST | `/api/runs` | 新建会话 `{cwd, prompt, model?, permissionMode?}`，等 agent 分配 id 后返回 |
 | GET | `/api/runs` | 运行中的进程 |
-| WS | `/api/sessions/:id/shell?kind=agent\|shell` | 终端：`{type:input\|resize\|kill}` 上行，`{type:ready\|output\|exit\|error}` 下行 |
+| WS | `/api/sessions/:id/shell?kind=agent\|shell` | 终端：`{type:input\|resize\|kill}` 上行，`{type:ready\|output\|exit\|error\|ping}` 下行；接上时先发屏幕快照 |
 | GET | `/api/runs/:id/stream` | SSE：先回放该运行的全部事件，再推实时 |
 | POST | `/api/runs/:id/approve` · `/interrupt` · `/stop` | 审批 `{requestId, decision, answers?}` / 打断本轮 / 结束进程 |
 

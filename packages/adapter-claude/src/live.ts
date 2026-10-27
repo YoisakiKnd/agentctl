@@ -9,6 +9,7 @@
  * 这里吐出的事件与回放同构且 uid 一致，前端可以无缝合并两条数据流。
  */
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import {
   oneLine,
@@ -16,6 +17,8 @@ import {
   type ApprovalDecision,
   type Item,
   type ModelInfo,
+  type QuotaSnapshot,
+  type QuotaWindow,
   type PermissionMode,
   type RunHandle,
   type RunRequest,
@@ -397,21 +400,31 @@ function isPromptEcho(line: Record<string, unknown>): boolean {
  * 起一个不发消息的 CLI 进程，只做 initialize 握手拿模型列表就退出。
  * 列表与终端里 /model 一致，包含别名、完整 id 和支持的推理强度。
  */
-export function probeModels(binary?: string, timeoutMs = 20_000): Promise<ModelInfo[]> {
+/**
+ * 不发消息地问 CLI 一些事：起一个 stream-json 进程，发几条控制请求，收齐回复就结束。
+ * 不产生会话文件、不调用模型。cwd 用家目录，免得落在某个项目里触发信任确认之类的东西。
+ */
+function controlProbe(binary: string | undefined, requests: Record<string, unknown>[], what: string, timeoutMs = 20_000): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary ?? 'claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], {
       stdio: ['pipe', 'pipe', 'ignore'],
+      cwd: homedir(),
       env: process.env,
     });
-    const done = (err: Error | null, models?: ModelInfo[]) => {
+    const replies = new Map<string, Record<string, unknown>>();
+    let settled = false;
+    const done = (err: Error | null) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       child.stdin.end();
       setTimeout(() => child.kill(), 1000).unref();
       if (err) reject(err);
-      else resolve(models ?? []);
+      else resolve(requests.map((_, i) => replies.get(`probe-${i}`) ?? {}));
     };
-    const timer = setTimeout(() => done(new Error('获取模型列表超时')), timeoutMs);
+    const timer = setTimeout(() => done(new Error(`${what}超时`)), timeoutMs);
     child.on('error', (err) => done(err));
+    child.on('exit', () => done(replies.size ? null : new Error(`${what}失败：claude 提前退出`)));
     createInterface({ input: child.stdout }).on('line', (text) => {
       let d: Record<string, unknown>;
       try {
@@ -420,20 +433,89 @@ export function probeModels(binary?: string, timeoutMs = 20_000): Promise<ModelI
         return;
       }
       if (d.type !== 'control_response') return;
-      const raw = ((d.response as { response?: { models?: unknown } } | undefined)?.response?.models ?? []) as unknown[];
-      const models = raw
-        .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object' && typeof (m as { value?: unknown }).value === 'string')
-        .map((m) => ({
-          value: m.value as string,
-          displayName: typeof m.displayName === 'string' ? m.displayName : (m.value as string),
-          description: typeof m.description === 'string' ? m.description : undefined,
-          resolvedModel: typeof m.resolvedModel === 'string' ? m.resolvedModel : undefined,
-          effortLevels: Array.isArray(m.supportedEffortLevels)
-            ? m.supportedEffortLevels.filter((x): x is string => typeof x === 'string')
-            : undefined,
-        }));
-      done(null, models);
+      const r = (d.response ?? {}) as { request_id?: string; subtype?: string; error?: string; response?: Record<string, unknown> };
+      if (!r.request_id) return;
+      if (r.subtype === 'error') return done(new Error(`${what}失败：${r.error ?? '未知错误'}`));
+      replies.set(r.request_id, r.response ?? {});
+      if (replies.size === requests.length) done(null);
     });
-    child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'init', request: { subtype: 'initialize' } })}\n`);
+    requests.forEach((request, i) => {
+      child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: `probe-${i}`, request })}\n`);
+    });
   });
+}
+
+export async function probeModels(binary?: string): Promise<ModelInfo[]> {
+  const [init] = await controlProbe(binary, [{ subtype: 'initialize' }], '获取模型列表');
+  const raw = (Array.isArray(init.models) ? init.models : []) as unknown[];
+  return raw
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object' && typeof (m as { value?: unknown }).value === 'string')
+    .map((m) => ({
+      value: m.value as string,
+      displayName: typeof m.displayName === 'string' ? m.displayName : (m.value as string),
+      description: typeof m.description === 'string' ? m.description : undefined,
+      resolvedModel: typeof m.resolvedModel === 'string' ? m.resolvedModel : undefined,
+      effortLevels: Array.isArray(m.supportedEffortLevels)
+        ? m.supportedEffortLevels.filter((x): x is string => typeof x === 'string')
+        : undefined,
+    }));
+}
+
+const LIMIT_LABEL: Record<string, string> = {
+  session: '5 小时',
+  five_hour: '5 小时',
+  weekly_all: '每周',
+  seven_day: '每周',
+  weekly_opus: '每周 · Opus',
+  seven_day_opus: '每周 · Opus',
+  weekly_sonnet: '每周 · Sonnet',
+  seven_day_sonnet: '每周 · Sonnet',
+};
+
+/**
+ * 套餐额度：和终端里 /usage 看到的是同一份数据（get_usage 控制请求，SDK 标注为实验接口）。
+ * 优先用通用的 limits 列表，没有时退回 rate_limits 里的固定窗口。
+ */
+export async function probeQuota(binary?: string): Promise<QuotaSnapshot> {
+  const [, usage] = await controlProbe(binary, [{ subtype: 'initialize' }, { subtype: 'get_usage', skip_behaviors: true }], '获取套餐额度');
+  const rl = (usage.rate_limits ?? {}) as Record<string, unknown>;
+  const windows: QuotaWindow[] = [];
+  let blocked = false;
+  const limits = Array.isArray(rl.limits) ? (rl.limits as Record<string, unknown>[]) : [];
+  for (const l of limits) {
+    const kind = typeof l.kind === 'string' ? l.kind : '';
+    if (typeof l.percent !== 'number' || !kind) continue;
+    windows.push({
+      // 和 Codex 用同一套键，前端按键对齐两边的窗口
+      id: kind === 'session' ? 'five_hour' : kind === 'weekly_all' ? 'seven_day' : kind,
+      label: LIMIT_LABEL[kind] ?? kind,
+      usedPercent: l.percent,
+      resetsAt: typeof l.resets_at === 'string' ? l.resets_at : undefined,
+      windowMinutes: l.group === 'session' ? 300 : l.group === 'weekly' ? 10080 : undefined,
+    });
+    if (l.percent >= 100 || l.severity === 'exceeded' || l.severity === 'blocked') blocked = true;
+  }
+  if (!windows.length) {
+    for (const id of ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet']) {
+      const w = rl[id] as { utilization?: unknown; resets_at?: unknown } | null | undefined;
+      if (!w || typeof w.utilization !== 'number') continue;
+      windows.push({
+        id,
+        label: LIMIT_LABEL[id],
+        usedPercent: w.utilization,
+        resetsAt: typeof w.resets_at === 'string' ? w.resets_at : undefined,
+        windowMinutes: id === 'five_hour' ? 300 : 10080,
+      });
+      if (w.utilization >= 100) blocked = true;
+    }
+  }
+  const extra = (rl.extra_usage ?? {}) as Record<string, unknown>;
+  return {
+    plan: typeof usage.subscription_type === 'string' ? usage.subscription_type : undefined,
+    windows,
+    credits: extra.is_enabled === true
+      ? { enabled: true, usedPercent: typeof extra.utilization === 'number' ? extra.utilization : undefined }
+      : undefined,
+    blocked,
+  };
 }

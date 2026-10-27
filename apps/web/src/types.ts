@@ -196,3 +196,27 @@ export interface UsageReport {
   totals: UsageTotals & { sessions: number };
   ms: number;
 }
+
+export interface QuotaWindow {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetsAt?: string;
+  windowMinutes?: number;
+}
+
+export interface QuotaEntry {
+  agent: AgentId;
+  name: string;
+  plan?: string;
+  windows?: QuotaWindow[];
+  credits?: { enabled: boolean; balance?: string; unlimited?: boolean; usedPercent?: number };
+  blocked?: boolean;
+  fetchedAt?: string;
+  error?: string;
+}
+
+export interface QuotaReport {
+  agents: QuotaEntry[];
+  warnPercent: number;
+}

@@ -15,12 +15,14 @@ import type { Registry } from './registry.ts';
 import type { RunInfo, RunManager } from './runs.ts';
 import type { ShellKind, ShellManager } from './shells.ts';
 import { usageReport } from './usage.ts';
+import type { QuotaService } from './quota.ts';
 
 export interface Ctx {
   cfg: Config;
   registry: Registry;
   runs: RunManager;
   shells: ShellManager;
+  quota: QuotaService;
   throttle: LoginThrottle;
   version: string;
   remote: boolean;
@@ -76,6 +78,10 @@ function answersOf(value: unknown): Record<string, string> | undefined {
   }
   return out;
 }
+
+const SHELL_HEARTBEAT_MS = 20_000;
+const clampCols = (v: unknown) => Math.min(Math.max(Number(v) || 100, 20), 500);
+const clampRows = (v: unknown) => Math.min(Math.max(Number(v) || 30, 5), 200);
 
 const MAX_TAGS = 12;
 
@@ -349,6 +355,14 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     return { tags: registry.tags() };
   });
 
+  /* ── 套餐额度 ─────────────────────────────────────────── */
+
+  // 每 10 分钟后台问一次；refresh=1 立刻去问（30 秒内重复刷新会直接用缓存）
+  app.get('/api/quota', async (req) => {
+    const q = req.query as { refresh?: string };
+    return { agents: await ctx.quota.list(q.refresh === '1'), warnPercent: Math.min(Math.max(Number(cfg.quotaWarnPercent) || 80, 1), 100) };
+  });
+
   /* ── 用量统计 ─────────────────────────────────────────── */
 
   // 第一次要把所有会话完整扫一遍（本机 ~500MB 约 2 秒），之后只重算变过的会话
@@ -412,6 +426,53 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       socket.close();
     };
 
+    // 下面有好几处 await；这期间浏览器已经能发消息了（比如刚连上就敲的字），先攒着，终端起来后按顺序处理
+    let shell: ReturnType<ShellManager['open']> | undefined;
+    const early: Buffer[] = [];
+    let detach = () => {};
+    const handle = (raw: Buffer) => {
+      if (!shell) {
+        if (early.length < 256) early.push(raw);
+        return;
+      }
+      let msg: { type?: string; data?: unknown; cols?: unknown; rows?: unknown };
+      try {
+        msg = JSON.parse(raw.toString('utf8')) as typeof msg;
+      } catch {
+        return;
+      }
+      if (msg.type === 'input' && typeof msg.data === 'string') shell.write(msg.data);
+      else if (msg.type === 'resize') shell.resize(clampCols(msg.cols), clampRows(msg.rows));
+      else if (msg.type === 'kill') shell.kill();
+      // ping 只是让服务端知道浏览器还在，不用回
+    };
+    socket.on('message', handle);
+
+    // 心跳：Tailscale / 手机网络切换时连接常常"半死"——两边都以为还连着。
+    // 服务端每 20 秒发一次协议级 ping，两轮收不到 pong 就断开；同时发一条应用层 ping，浏览器靠它判断连接是否还活着
+    let alive = true;
+    socket.on('pong', () => {
+      alive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        socket.terminate();
+        return;
+      }
+      alive = false;
+      try {
+        socket.ping();
+      } catch {
+        /* 已经断了，close 事件会清理 */
+      }
+      send({ type: 'ping' });
+    }, SHELL_HEARTBEAT_MS);
+    socket.on('close', () => {
+      clearInterval(heartbeat);
+      detach();
+    });
+    socket.on('error', () => socket.terminate());
+
     // 浏览器跨站发起的 WebSocket 也会带上 cookie；这是一个能执行任意命令的终端，必须同源
     const origin = req.headers.origin;
     if (origin) {
@@ -427,8 +488,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     const { id } = req.params as { id: string };
     const q = req.query as { kind?: string; cols?: string; rows?: string };
     const kind: ShellKind = q.kind === 'shell' ? 'shell' : 'agent';
-    const cols = Math.min(Math.max(Number(q.cols) || 100, 20), 500);
-    const rows = Math.min(Math.max(Number(q.rows) || 30, 5), 200);
+    const cols = clampCols(q.cols);
+    const rows = clampRows(q.rows);
 
     const session = await registry.get(id);
     if (!session) return fail('会话不存在');
@@ -457,23 +518,17 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       file = process.env.SHELL || '/bin/bash';
       args = ['-l'];
     }
+    if (socket.readyState !== socket.OPEN) return;
 
-    const shell = shells.open({ key, kind, file, args, cwd, title: session.title, cols, rows });
-    send({ type: 'ready', shell: shell.info() });
-    const detach = shell.attach(send);
-
-    socket.on('message', (raw: Buffer) => {
-      let msg: { type?: string; data?: unknown; cols?: unknown; rows?: unknown };
-      try {
-        msg = JSON.parse(raw.toString('utf8')) as typeof msg;
-      } catch {
-        return;
-      }
-      if (msg.type === 'input' && typeof msg.data === 'string') shell.write(msg.data);
-      else if (msg.type === 'resize') shell.resize(Number(msg.cols) || cols, Number(msg.rows) || rows);
-      else if (msg.type === 'kill') shell.kill();
-    });
-    socket.on('close', detach);
+    const opened = shells.open({ key, kind, file, args, cwd, title: session.title, cols, rows });
+    shell = opened;
+    send({ type: 'ready', shell: opened.info() });
+    detach = opened.attach((msg) => {
+      send(msg);
+      // 进程退出：告诉页面后关掉连接，别让它以为还能输入
+      if (msg.type === 'exit') setTimeout(() => socket.close(), 200);
+    }, cols, rows);
+    for (const raw of early.splice(0)) handle(raw);
   });
 
   app.get('/api/agents/:id/models', async (req, reply) => {
