@@ -14,6 +14,7 @@ import {
   type AgentAdapter,
   type EventWindow,
   type Line,
+  type PermissionMode,
   type ReplayOptions,
   type RunHandle,
   type RunRequest,
@@ -42,6 +43,14 @@ interface Decoded {
 }
 
 /** 列表摘要所需的事实，跟着增量解压逐步累积 */
+/** DSH 的权限预设 → 网页上的权限模式；Auto review 预设没有对应项，按工作区内修改显示 */
+export const DSH_PRESET_MODE: Record<string, PermissionMode> = {
+  'read-only': 'plan',
+  'workspace-write': 'default',
+  auto: 'default',
+  'danger-full-access': 'bypassPermissions',
+};
+
 interface Facts {
   size: number;
   mtime: number;
@@ -57,6 +66,8 @@ interface Facts {
   turns: number;
   preview?: string;
   lastTime?: number;
+  /** 会话创建时（或之后用 /permission）定下的权限预设 */
+  permission?: PermissionMode;
 }
 
 async function readFrom(file: string, from: number, to: number): Promise<Buffer> {
@@ -168,6 +179,7 @@ export class DshAdapter implements AgentAdapter {
       updatedAt: new Date(f.lastTime ?? st.mtimeMs).toISOString(),
       preview: f.preview,
       subagent: f.subagent,
+      permissionMode: f.permission,
     };
   }
 
@@ -182,7 +194,8 @@ export class DshAdapter implements AgentAdapter {
       head.includes('"user/message"') ||
       head.includes('"model/selection"') ||
       head.includes('"request/context"') ||
-      head.includes('"subagent/descriptor"');
+      head.includes('"subagent/descriptor"') ||
+      head.includes('"permission/preset"');
     const time = /"time":(\d{10,})/.exec(head)?.[1];
     if (time) f.lastTime = Number(time);
     if (!interesting) return;
@@ -195,6 +208,9 @@ export class DshAdapter implements AgentAdapter {
         f.sessionId = typeof d.id === 'string' ? d.id : f.sessionId;
         f.cwd = typeof d.cwd === 'string' ? d.cwd : f.cwd;
         if (d.origin === 'subagent') f.subagent ??= 'subagent';
+        break;
+      case 'permission/preset':
+        f.permission = DSH_PRESET_MODE[String(data.preset)] ?? f.permission;
         break;
       case 'subagent/descriptor':
         f.subagent = 'subagent';

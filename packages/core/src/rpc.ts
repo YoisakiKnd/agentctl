@@ -7,8 +7,8 @@ type Rec = Record<string, unknown>;
  * 子进程上的 JSON-RPC 2.0（stdio，一行一条）：Codex app-server、DSH 的 ACP 都是这种形态。
  * 同时充当客户端（我们发请求）和服务端（对方发审批之类的请求过来）。
  */
-export function spawnJsonRpc(file: string, args: string[], cwd?: string) {
-  const child = spawn(file, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+export function spawnJsonRpc(file: string, args: string[], cwd?: string, env?: Record<string, string>) {
+  const child = spawn(file, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
   let nextId = 1;
   const waiters = new Map<number, { resolve: (v: Rec) => void; reject: (e: Error) => void }>();
   let onNotify: (method: string, params: Rec) => void = () => undefined;

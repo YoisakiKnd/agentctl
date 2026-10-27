@@ -9,6 +9,13 @@ export interface RefinedRow {
   preview?: string;
 }
 
+/** 会话上次用的运行选项：刷新、换设备、进程退出后再发消息都沿用它 */
+export interface RunPrefs {
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+}
+
 export interface Annotation {
   pinned: boolean;
   tags: string[];
@@ -55,6 +62,11 @@ export class IndexDb {
         size    INTEGER NOT NULL,
         mtime   INTEGER NOT NULL,
         buckets TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS session_prefs (
+        id    TEXT PRIMARY KEY,
+        prefs TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS kv (
         key   TEXT PRIMARY KEY,
@@ -156,6 +168,39 @@ export class IndexDb {
          ON CONFLICT(id) DO UPDATE SET pinned=excluded.pinned, tags=excluded.tags, title_override=excluded.title_override`,
       )
       .run(id, a.pinned ? 1 : 0, JSON.stringify(a.tags), a.title ?? null);
+  }
+
+  getPrefs(id: string): RunPrefs | null {
+    const row = this.db.prepare('SELECT prefs FROM session_prefs WHERE id = ?').get(id) as { prefs: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.prefs) as RunPrefs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 合并写入：只改传进来的字段；值为 undefined 的字段表示"回到默认"，从记录里删掉 */
+  patchPrefs(id: string, patch: RunPrefs): void {
+    const next: Record<string, unknown> = { ...(this.getPrefs(id) ?? {}) };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete next[k];
+      else next[k] = v;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO session_prefs (id, prefs, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET prefs=excluded.prefs, updated_at=excluded.updated_at`,
+      )
+      .run(id, JSON.stringify(next), Date.now());
+  }
+
+  getKv(key: string): string | undefined {
+    return (this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined)?.value;
+  }
+
+  setKv(key: string, value: string): void {
+    this.db.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
   close(): void {

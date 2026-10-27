@@ -8,14 +8,34 @@ import { AgentBadge } from '../components/AgentBadge';
 import Icon from '../components/Icon';
 import AppShell from '../components/Layout';
 
-/** 在某个目录里新开一个会话（Claude Code / Codex） */
+const OPTS_KEY = 'agentctl.new-opts';
+
+function savedOpts(agent: AgentId): RunOptions {
+  try {
+    const raw = localStorage.getItem(`${OPTS_KEY}.${agent}`);
+    return raw ? (JSON.parse(raw) as RunOptions) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 在某个目录里新开一个会话（Claude Code / Codex / DSH） */
 export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { cwd?: string; agent?: AgentId }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agent, setAgent] = useState<AgentId>(initialAgent ?? 'claude');
   const [cwd, setCwd] = useState(initialCwd ?? '');
   const [prompt, setPrompt] = useState('');
-  const [opts, setOpts] = useState<RunOptions>({});
+  const [opts, setOptsState] = useState<RunOptions>(() => savedOpts(initialAgent ?? 'claude'));
+  // 每个 agent 记住上次新建时选的模型 / 强度 / 权限模式（只存在这个浏览器里）
+  const setOpts = (next: RunOptions) => {
+    setOptsState(next);
+    try {
+      localStorage.setItem(`${OPTS_KEY}.${agent}`, JSON.stringify(next));
+    } catch {
+      /* 存不了就只对这次有效 */
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -52,7 +72,14 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
     setBusy(true);
     setError('');
     try {
-      const { run } = await api.startRun({ agent, cwd: cwd.trim(), prompt, ...opts });
+      const { run } = await api.startRun({
+        agent,
+        cwd: cwd.trim(),
+        prompt,
+        model: opts.model ?? 'default',
+        effort: opts.effort ?? '',
+        permissionMode: opts.permissionMode ?? 'default',
+      });
       if (!run.sessionKey) throw new Error('agent 没有返回会话 id');
       navigate(sessionHref(run.sessionKey).slice(1));
     } catch (err) {
@@ -90,8 +117,8 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                     aria-pressed={a.id === agent}
                     onClick={() => {
                       setAgent(a.id);
-                      // 模型和权限选项各家不同，换 agent 时回到默认
-                      setOpts({});
+                      // 模型和权限选项各家不同，换 agent 时换成那个 agent 上次的选择
+                      setOptsState(savedOpts(a.id));
                     }}
                   >
                     <AgentBadge agent={a.id} />

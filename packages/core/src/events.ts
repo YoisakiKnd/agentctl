@@ -1,3 +1,5 @@
+import type { PermissionMode } from './adapter.ts';
+
 /**
  * 统一事件模型 —— 整个系统的核心契约。
  * 所有适配器只做一件事：把 agent 的原始格式翻译成这里的结构。
@@ -105,6 +107,8 @@ export interface SessionSummary {
   unknownTypes?: Record<string, number>;
   /** 子代理会话（例如 Codex 的 Guardian 审查），值为子代理名；列表里弱化显示 */
   subagent?: string;
+  /** agent 自己在会话文件里记下的最近一次权限模式（换算成统一的 PermissionMode） */
+  permissionMode?: PermissionMode;
   /** 以下是 agentctl 自己的注解（存在索引库里，不写 agent 的文件） */
   pinned?: boolean;
   tags?: string[];

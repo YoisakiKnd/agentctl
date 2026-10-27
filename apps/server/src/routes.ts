@@ -12,6 +12,7 @@ import {
 } from './auth.ts';
 import { expandHome, isPathAllowed, type Config } from './config.ts';
 import type { Registry } from './registry.ts';
+import type { RunPrefs } from './db.ts';
 import type { RunInfo, RunManager } from './runs.ts';
 import type { ShellKind, ShellManager } from './shells.ts';
 import { usageReport } from './usage.ts';
@@ -113,6 +114,20 @@ function runOptions(body: RunBody, cfg: Config): { model?: string; effort?: stri
   return out;
 }
 
+/**
+ * 请求里没带的选项沿用会话上次的（刷新、换设备、进程退出后再发消息，模式都不变）；
+ * 带了就以请求为准，'default' / 空串表示明确回到默认。
+ * 服务端后来禁用了 bypass 的话，存着的 bypass 不再生效。
+ */
+function effectiveOptions(body: RunBody, prefs: RunPrefs, cfg: Config) {
+  const pick = (k: keyof RunBody & keyof RunPrefs) => (body[k] !== undefined ? body[k] : prefs[k]);
+  let permissionMode = pick('permissionMode');
+  if (permissionMode === 'bypassPermissions' && !cfg.allowBypassPermissions && body.permissionMode === undefined) permissionMode = undefined;
+  const opts = runOptions({ model: pick('model'), effort: pick('effort'), permissionMode }, cfg);
+  if (opts.model === 'default') delete opts.model;
+  return opts;
+}
+
 function promptOf(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) throw new BadRequest('消息不能为空');
   if (value.length > MAX_PROMPT_CHARS) throw new BadRequest(`消息过长（上限 ${MAX_PROMPT_CHARS} 字符）`);
@@ -178,6 +193,14 @@ const EMPTY_WINDOW: EventWindow = { events: [], nextBefore: null, hasMore: false
 export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<void> {
   const { cfg, registry, runs, shells, throttle } = ctx;
   const authRequired = !!cfg.password;
+
+  /** 进程报出的模型列表记下来，给下次进程不在时的下拉框用 */
+  const rememberRunModels = (run: ReturnType<RunManager['start']>) => {
+    const agent = run.info().agent;
+    run.subscribe((msg) => {
+      if (msg.type === 'config' && msg.models?.length) registry.rememberModels(agent, msg.models);
+    });
+  };
 
   app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
     if (err instanceof BadRequest) return reply.code(400).send({ error: err.message });
@@ -283,7 +306,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     if (!session) return reply.code(404).send({ error: '会话不存在' });
     const adapter = registry.adapter(session.agent);
     const openShells = shells.list().filter((sh) => sh.key.startsWith(`${id}:`) && !sh.exited);
-    return { session, run, canRun: !!adapter?.run, canResumeInTerminal: !!adapter?.resumeArgs, shells: openShells };
+    const raw = registry.prefs(session);
+    const prefs = raw.permissionMode === 'bypassPermissions' && !cfg.allowBypassPermissions ? { ...raw, permissionMode: undefined } : raw;
+    return { session, run, prefs, canRun: !!adapter?.run, canResumeInTerminal: !!adapter?.resumeArgs, shells: openShells };
   });
 
   app.get('/api/sessions/:id/events', async (req, reply) => {
@@ -533,7 +558,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
 
   app.get('/api/agents/:id/models', async (req, reply) => {
     const adapter = registry.adapter((req.params as { id: string }).id);
-    if (!adapter?.models) return { models: [] };
+    // 没有离线取模型列表办法的 agent（DSH）：用上次运行时进程报的
+    if (!adapter?.models) {
+      const cached = adapter ? registry.cachedModels(adapter.id) : [];
+      // 第一项「默认」= 不指定，跟随 agent 自己的配置（和其他 agent 的列表对齐）
+      return { models: cached.length ? [{ value: 'default', displayName: 'Default', effortLevels: cached[0].effortLevels }, ...cached] : [] };
+    }
     try {
       return { models: await adapter.models(await registry.binaryOf(adapter)) };
     } catch (err) {
@@ -547,7 +577,23 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     if (!run || run.state === 'exited') return reply.code(404).send({ error: '运行不存在或已结束' });
     if (!run.handle.setPermissionMode) return reply.code(400).send({ error: '该 agent 不支持运行中切换权限模式' });
     const mode = modeOf((req.body as { mode?: unknown } | undefined)?.mode, cfg);
-    return { mode: await run.handle.setPermissionMode(mode) };
+    const applied = await run.handle.setPermissionMode(mode);
+    const key = run.info().sessionKey;
+    if (key) registry.savePrefs(key, { permissionMode: applied });
+    return { mode: applied };
+  });
+
+  // 运行中切换推理强度（DSH）；空串回到默认
+  app.post('/api/runs/:id/effort', async (req, reply) => {
+    const run = runs.get((req.params as { id: string }).id);
+    if (!run || run.state === 'exited') return reply.code(404).send({ error: '运行不存在或已结束' });
+    if (!run.handle.setEffort) return reply.code(400).send({ error: '该 agent 不支持运行中切换推理强度，下次启动时生效' });
+    const raw = (req.body as { effort?: unknown } | undefined)?.effort;
+    if (typeof raw !== 'string' || (raw !== '' && !EFFORT_RE.test(raw))) throw new BadRequest('effort 不合法');
+    const effort = await run.handle.setEffort(raw);
+    const key = run.info().sessionKey;
+    if (key) registry.savePrefs(key, { effort: effort || undefined });
+    return { effort };
   });
 
   // 运行中切换模型：不重启进程，下一次请求起生效
@@ -558,6 +604,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     const model = modelOf((req.body as { model?: unknown } | undefined)?.model);
     const resolved = await run.handle.setModel(model);
     run.model = model;
+    const key = run.info().sessionKey;
+    if (key) registry.savePrefs(key, { model: model === 'default' ? undefined : model });
     return { model, resolved };
   });
 
@@ -573,13 +621,17 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     }
     const prompt = promptOf(body.prompt);
     const cwd = await checkedCwd(cfg, body.cwd);
-    const run = runs.start({ adapter, binary, cwd, prompt, title: oneLine(prompt, 80), ...runOptions(body, cfg), allowBypass: cfg.allowBypassPermissions });
+    const opts = effectiveOptions(body, {}, cfg);
+    const run = runs.start({ adapter, binary, cwd, prompt, title: oneLine(prompt, 80), ...opts, allowBypass: cfg.allowBypassPermissions });
+    rememberRunModels(run);
     try {
       await withTimeout(run.handle.sessionId, SESSION_ID_TIMEOUT_MS, 'agent 启动超时');
     } catch (err) {
       run.handle.stop();
       return reply.code(502).send({ error: (err as Error).message });
     }
+    const key = run.info().sessionKey;
+    if (key) registry.savePrefs(key, opts);
     registry.invalidate();
     return { run: run.info() };
   });
@@ -607,6 +659,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       return reply.code(400).send({ error: `找不到 ${adapter.meta.binary} 可执行文件` });
     }
     const cwd = await checkedCwd(cfg, session.cwd);
+    const opts = effectiveOptions(body, registry.prefs(session), cfg);
     const run = runs.start({
       adapter,
       binary,
@@ -615,9 +668,11 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       title: session.title,
       resumeSessionId: session.sessionId,
       startTurn: session.turns,
-      ...runOptions(body, cfg),
+      ...opts,
       allowBypass: cfg.allowBypassPermissions,
     });
+    rememberRunModels(run);
+    registry.savePrefs(id, { model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode });
     return { run: run.info() };
   });
 

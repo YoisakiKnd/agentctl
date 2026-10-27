@@ -133,6 +133,7 @@ export type LiveMessage =
       type: 'config';
       model?: string;
       permissionMode?: PermissionMode;
+      effort?: string;
       /** 进程自己报的可选模型（DSH 的 ACP 只在建立会话后才给），网页用它替换静态列表 */
       models?: ModelInfo[];
     };
@@ -150,6 +151,8 @@ export interface RunHandle {
   setPermissionMode?(mode: PermissionMode): Promise<PermissionMode>;
   /** 运行中切换模型（下一次请求起生效）；resolve 为实际生效的模型 id */
   setModel?(model: string): Promise<string | undefined>;
+  /** 运行中切换推理强度（下一轮起生效）；空串表示回到默认 */
+  setEffort?(effort: string): Promise<string | undefined>;
   /** 打断当前这一轮，进程保留 */
   interrupt(): void;
   /** 结束进程 */

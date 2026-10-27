@@ -186,7 +186,8 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/agents/:id/models` | CLI 当前可用的模型（`initialize` 握手拿到，不花钱，缓存 10 分钟） |
 | POST | `/api/runs/:id/model` | 运行中切换模型 `{model}` |
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |
-| POST | `/api/sessions/:id/send` | 往会话发消息：有活进程就写 stdin，否则 `--resume` 起一个 |
+| POST | `/api/runs/:id/effort` | 运行中切换推理强度 `{effort}`（DSH） |
+| POST | `/api/sessions/:id/send` | 往会话发消息：有活进程就写 stdin，否则 `--resume` 起一个；没带的运行选项沿用会话上次的 |
 | POST | `/api/runs` | 新建会话 `{cwd, prompt, model?, permissionMode?}`，等 agent 分配 id 后返回 |
 | GET | `/api/runs` | 运行中的进程 |
 | WS | `/api/sessions/:id/shell?kind=agent\|shell` | 终端：`{type:input\|resize\|kill}` 上行，`{type:ready\|output\|exit\|error\|ping}` 下行；接上时先发屏幕快照 |
@@ -199,7 +200,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 |---|---|---|
 | Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 打断 + Shell 模式 |
 | Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答、打断、运行中切模型 / 权限 + Shell 模式 |
-| DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、打断、运行中切模型（网页终端只提供普通 shell） |
+| DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、打断、运行中切模型与推理强度、三档权限预设（网页终端只提供普通 shell；Agent 预设 ACP 不支持） |
 | Pi | ✅ 已接入（`~/.pi/agent/sessions`，会话树取当前分支，含花费） | 本机未装 `pi` 命令行，只读 |
 | Cursor | 本机未安装、无会话数据 | — |
 

@@ -3,7 +3,7 @@
  * 磁盘上的 jsonl 与 `claude -p --output-format stream-json` 吐出的 user/assistant 行同构，
  * 回放和实时运行共用这里的解析，保证两边事件长得一样、uid 一致。
  */
-import { clip, flattenContent, lineDiff, oneLine, summarizeToolInput, type Item, type UnifiedEvent } from '@agentctl/core';
+import { clip, flattenContent, lineDiff, oneLine, summarizeToolInput, type Item, type PermissionMode, type UnifiedEvent } from '@agentctl/core';
 
 /** 这些行是 Claude Code 的内部记账，对阅读时间线没有价值 */
 export const NOISE = new Set([
@@ -20,6 +20,8 @@ export const NOISE = new Set([
   'queue-operation',
 ]);
 
+const CLAUDE_MODES = new Set<PermissionMode>(['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions']);
+
 export interface Facts {
   sessionId?: string;
   cwd?: string;
@@ -27,6 +29,8 @@ export interface Facts {
   model?: string;
   turns: number;
   costUsd?: number;
+  /** 最近一条用户行上的 permissionMode（终端里 Shift+Tab 切的就是它） */
+  permissionMode?: PermissionMode;
   /** 最后一行 cost-state 的按模型累计（用量估价参考单价用） */
   modelUsage?: Record<string, Record<string, unknown>>;
   lastTs?: string;
@@ -57,6 +61,10 @@ export function harvest(line: Record<string, unknown>, facts: Facts, head: boole
   const turnPos = line.turnPosition as { turnIndex?: unknown } | undefined;
   if (turnPos && typeof turnPos.turnIndex === 'number') {
     facts.turns = Math.max(facts.turns, turnPos.turnIndex);
+  }
+
+  if (typeof line.permissionMode === 'string' && CLAUDE_MODES.has(line.permissionMode as PermissionMode)) {
+    facts.permissionMode = line.permissionMode as PermissionMode;
   }
 
   if (type === 'assistant') {

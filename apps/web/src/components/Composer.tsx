@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { RunOptions } from '../api';
 import { homeShorten } from '../format';
 import { useAllowBypass } from '../caps';
@@ -20,8 +20,27 @@ const MODES: ModeOption[] = [
   { value: 'bypassPermissions', label: '跳过所有权限', hint: '不再询问任何操作，agent 可以直接执行任意命令' },
 ];
 
-/** DSH 的 ACP 没有暴露权限模式：沿用 DSH 自己的权限预设，网页上不提供切换 */
-const NO_MODES: ModeOption[] = [];
+/**
+ * DSH 的三档权限预设。沙箱在会话创建时定下（新会话按这里选的建）；
+ * 已有会话运行中切换，改的是网页怎么回答它的权限请求。
+ */
+const DSH_MODES: ModeOption[] = [
+  {
+    value: 'plan',
+    label: '仅可查看',
+    hint: '只读沙箱（新会话）；已有会话里，所有权限请求都自动拒绝',
+  },
+  {
+    value: 'default',
+    label: '工作区内修改',
+    hint: '工作区内可以改文件，越界的操作逐个审批（DSH 默认）',
+  },
+  {
+    value: 'bypassPermissions',
+    label: '完全权限',
+    hint: '不加沙箱、不询问（新会话）；已有会话里，所有权限请求都自动同意',
+  },
+];
 
 /** Codex 没有"只自动接受编辑"这一档；plan 对应只读沙箱 */
 const CODEX_MODES: ModeOption[] = [
@@ -32,7 +51,7 @@ const CODEX_MODES: ModeOption[] = [
 ];
 
 export function modesFor(agent: AgentId): ModeOption[] {
-  if (agent === 'dsh') return NO_MODES;
+  if (agent === 'dsh') return DSH_MODES;
   return agent === 'codex' ? CODEX_MODES : MODES;
 }
 
@@ -124,6 +143,31 @@ export function ModelSelect({
   );
 }
 
+export function EffortSelect({
+  levels,
+  value,
+  onChange,
+  disabled,
+}: {
+  levels: string[];
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  // 进程报的当前值可能不在列表里（例如换模型后），也要显示出来
+  const all = value && !levels.includes(value) ? [...levels, value] : levels;
+  return (
+    <select className="select" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} aria-label="推理强度" title="推理强度">
+      <option value="">强度·默认</option>
+      {all.map((e) => (
+        <option key={e} value={e}>
+          强度·{EFFORT_LABEL[e] ?? e}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** 启动进程时才生效的选项：模型、推理强度、权限模式 */
 export function RunOptionFields({
   agent,
@@ -149,21 +193,8 @@ export function RunOptionFields({
           onChange({ ...value, model: v === 'default' ? undefined : v, effort });
         }}
       />
-      {efforts.length ? (
-        <select
-          className="select"
-          value={value.effort ?? ''}
-          onChange={(e) => onChange({ ...value, effort: e.target.value || undefined })}
-          aria-label="推理强度"
-          title="推理强度（--effort）"
-        >
-          <option value="">强度·默认</option>
-          {efforts.map((e) => (
-            <option key={e} value={e}>
-              强度·{EFFORT_LABEL[e] ?? e}
-            </option>
-          ))}
-        </select>
+      {efforts.length || value.effort ? (
+        <EffortSelect levels={efforts} value={value.effort ?? ''} onChange={(e) => onChange({ ...value, effort: e || undefined })} />
       ) : null}
       <PermissionSelect
         agent={agent}
@@ -197,6 +228,9 @@ export default function Composer({
   onSetPermissionMode,
   warning,
   notice,
+  initialOpts,
+  runEffort,
+  onSetEffort,
 }: {
   agent: AgentId;
   path: string;
@@ -216,9 +250,24 @@ export default function Composer({
   warning?: string;
   /** 输入框上方的额外内容（套餐额度提醒） */
   notice?: React.ReactNode;
+  /** 进程不在时下拉框的初始值：会话上次用的选项 */
+  initialOpts?: RunOptions;
+  /** 进程当前的推理强度；有 onSetEffort 时运行中也能切换 */
+  runEffort?: string | null;
+  onSetEffort?: (effort: string) => Promise<void>;
 }) {
   const [text, setText] = useState('');
-  const [opts, setOpts] = useState<RunOptions>({});
+  const [opts, setOptsState] = useState<RunOptions>(initialOpts ?? {});
+  /** 用户自己动过下拉框之后，就不再被服务端回来的 prefs 覆盖 */
+  const touched = useRef(false);
+  const setOpts = (next: RunOptions) => {
+    touched.current = true;
+    setOptsState(next);
+  };
+  const initialKey = JSON.stringify(initialOpts ?? {});
+  useEffect(() => {
+    if (!touched.current) setOptsState(JSON.parse(initialKey) as RunOptions);
+  }, [initialKey]);
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState('');
@@ -231,7 +280,9 @@ export default function Composer({
     setBusy(true);
     setError('');
     try {
-      await onSend(value, opts);
+      // 三项都显式带上：'default' / 空串表示"就用默认"，免得服务端拿会话上次的选项补
+      await onSend(value, { model: opts.model ?? 'default', effort: opts.effort ?? '', permissionMode: opts.permissionMode ?? 'default' });
+      touched.current = false;
       setText('');
       input.current?.focus();
     } catch (err) {
@@ -300,6 +351,17 @@ export default function Composer({
                       onChange={(m) => {
                         setSwitching(true);
                         void act(() => onSetModel(m)).finally(() => setSwitching(false));
+                      }}
+                    />
+                  ) : null}
+                  {onSetEffort ? (
+                    <EffortSelect
+                      levels={(runModels ?? []).find((m) => m.value === runModel)?.effortLevels ?? runModels?.[0]?.effortLevels ?? []}
+                      value={runEffort ?? ''}
+                      disabled={switching}
+                      onChange={(e) => {
+                        setSwitching(true);
+                        void act(() => onSetEffort(e)).finally(() => setSwitching(false));
                       }}
                     />
                   ) : null}

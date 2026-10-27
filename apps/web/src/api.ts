@@ -12,6 +12,7 @@ import type {
   Stats,
   UsageReport,
   QuotaReport,
+  RunPrefs,
 } from './types';
 
 export interface RunOptions {
@@ -75,6 +76,7 @@ export const api = {
     request<{
       session: SessionSummary;
       run?: RunInfo;
+      prefs?: RunPrefs;
       canRun: boolean;
       canResumeInTerminal?: boolean;
       shells?: { kind: 'agent' | 'shell' }[];
@@ -129,6 +131,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ requestId, decision, answers }),
     }),
+  setEffort: (runId: string, effort: string) =>
+    request<{ effort: string }>(`/api/runs/${runId}/effort`, { method: 'POST', body: JSON.stringify({ effort }) }),
   setPermissionMode: (runId: string, mode: PermissionMode) =>
     request<{ mode: PermissionMode }>(`/api/runs/${runId}/permission-mode`, {
       method: 'POST',

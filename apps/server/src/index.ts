@@ -20,7 +20,7 @@ import { QuotaService } from './quota.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 interface ServeOptions {
   host?: string;

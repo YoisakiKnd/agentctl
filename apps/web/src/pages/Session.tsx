@@ -10,7 +10,7 @@ import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
 import { mergeEvents, useLiveRun } from '../live';
 import { navigate, sessionHref, shellHref } from '../router';
-import type { ApprovalDecision, PermissionMode, RunState, SessionSummary, UnifiedEvent } from '../types';
+import type { ApprovalDecision, PermissionMode, RunPrefs, RunState, SessionSummary, UnifiedEvent } from '../types';
 import { AGENT_LABEL } from '../types';
 import type { RunOptions } from '../api';
 
@@ -50,6 +50,8 @@ export default function Session({ id, at }: { id: string; at?: number }) {
   const [file, setFile] = useState<FileView>(EMPTY_FILE);
   const [runId, setRunId] = useState<string | null>(null);
   const [runModel, setRunModel] = useState<string | undefined>();
+  /** 会话上次用的模型 / 强度 / 权限模式：刷新、换设备后输入框下拉框沿用它 */
+  const [prefs, setPrefs] = useState<RunPrefs | undefined>();
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState('');
   const [unseen, setUnseen] = useState(false);
@@ -109,6 +111,7 @@ export default function Session({ id, at }: { id: string; at?: number }) {
       .session(id)
       .then((d) => {
         setSession(d.session);
+        setPrefs(d.prefs);
         setAgentShell(!!d.shells?.some((sh) => sh.kind === 'agent'));
       })
       .catch(() => undefined);
@@ -156,6 +159,7 @@ export default function Session({ id, at }: { id: string; at?: number }) {
     fileEnd.current = 0;
     lastUid.current = undefined;
     setSession(null);
+    setPrefs(undefined);
     setFile(EMPTY_FILE);
     setRunId(null);
     setRunModel(undefined);
@@ -175,6 +179,7 @@ export default function Session({ id, at }: { id: string; at?: number }) {
         const fwd = at !== undefined ? await api.eventsAfter(id, win.window.end) : null;
         if (cancelled) return;
         setSession(detail.session);
+        setPrefs(detail.prefs);
         setCanRun(detail.canRun);
         setCanResume(!!detail.canResumeInTerminal);
         setAgentShell(!!detail.shells?.some((sh) => sh.kind === 'agent'));
@@ -331,6 +336,14 @@ export default function Session({ id, at }: { id: string; at?: number }) {
     async (requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) => {
       if (!runId) throw new Error('没有正在进行的运行');
       await api.approve(runId, requestId, decision, answers);
+    },
+    [runId],
+  );
+
+  const setEffort = useCallback(
+    async (effort: string) => {
+      if (!runId) return;
+      await api.setEffort(runId, effort);
     },
     [runId],
   );
@@ -494,6 +507,9 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             onSetPermissionMode={runId ? setPermissionMode : undefined}
             warning={warning}
             notice={<QuotaAlert agent={session.agent} />}
+            initialOpts={prefs}
+            runEffort={live.effort}
+            onSetEffort={runId && session.agent === 'dsh' ? setEffort : undefined}
           />
         ) : session ? (
           <footer className="readonly">

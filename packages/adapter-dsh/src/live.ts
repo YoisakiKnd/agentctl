@@ -13,6 +13,7 @@ import {
   spawnJsonRpc,
   type ApprovalDecision,
   type ModelInfo,
+  type PermissionMode,
   type RunHandle,
   type RunRequest,
   type RunSink,
@@ -31,8 +32,19 @@ interface Pending {
   event: UnifiedEvent;
 }
 
+/**
+ * 网页上的三档审批模式 → DSH 的权限预设（`DSH_PERMISSION_MODE`）。
+ * DSH 只在**新建**会话时读它并记进会话文件；恢复已有会话时沿用会话里记的预设（实测），
+ * ACP 也不提供中途切换（/permission 命令在 ACP 下会被当成普通消息发给模型）。
+ */
+const DSH_PRESET: Partial<Record<PermissionMode, string>> = {
+  plan: 'read-only',
+  default: 'workspace-write',
+  bypassPermissions: 'danger-full-access',
+};
+
 /** ACP 的 configOptions → 模型列表；模型值是 '["provider","model"]' 这样的 JSON 字符串 */
-function modelsOf(configOptions: unknown): { models: ModelInfo[]; current?: string } {
+function modelsOf(configOptions: unknown): { models: ModelInfo[]; current?: string; effort?: string } {
   const opts = Array.isArray(configOptions) ? (configOptions as Rec[]) : [];
   const model = opts.find((o) => o.id === 'model' || o.category === 'model');
   const effort = opts.find((o) => o.id === 'reasoning_effort' || o.category === 'thought_level');
@@ -51,11 +63,18 @@ function modelsOf(configOptions: unknown): { models: ModelInfo[]; current?: stri
       description: typeof m.group === 'string' ? m.group : undefined,
       effortLevels: efforts.length ? efforts : undefined,
     }));
-  return { models, current: typeof model?.currentValue === 'string' ? model.currentValue : undefined };
+  return {
+    models,
+    current: typeof model?.currentValue === 'string' ? model.currentValue : undefined,
+    effort: typeof effort?.currentValue === 'string' ? effort.currentValue : undefined,
+  };
 }
 
 export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
-  const rpc = spawnJsonRpc(req.binary ?? 'dsh', ['--profile', 'acp'], req.cwd);
+  const initialMode: PermissionMode =
+    req.permissionMode === 'bypassPermissions' && !req.allowBypass ? 'default' : (req.permissionMode ?? 'default');
+  const preset = DSH_PRESET[initialMode] ?? 'workspace-write';
+  const rpc = spawnJsonRpc(req.binary ?? 'dsh', ['--profile', 'acp'], req.cwd, { DSH_PERMISSION_MODE: preset });
   const { child } = rpc;
 
   let sessionId = req.resumeSessionId ?? '';
@@ -76,6 +95,11 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
   let exited = false;
   let stderrTail = '';
   let idleTimer: NodeJS.Timeout | undefined;
+  /**
+   * 网页这边怎么回答 DSH 的权限请求。沙箱在会话创建时就定了，运行中切换只能改这一层：
+   * 完全权限 = 全部自动同意；仅可查看 = 全部自动拒绝；工作区内修改 = 逐个弹审批卡。
+   */
+  let policy: PermissionMode = initialMode;
 
   const setState = (next: RunState, extra: { error?: string; exitCode?: number | null } = {}) => {
     if (state === next && !extra.error) return;
@@ -174,6 +198,17 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
       options: options.map((o) => ({ optionId: String(o.optionId ?? ''), kind: String(o.kind ?? '') })),
       event,
     });
+    if (policy === 'bypassPermissions' || policy === 'plan') {
+      const allow = policy === 'bypassPermissions';
+      handle.respond(key, allow ? 'allow' : 'deny');
+      const input = (tool.rawInput ?? {}) as Rec;
+      const what = oneLine(String(input.command ?? input.path ?? input.file_path ?? (event.item.kind === 'approval' ? event.item.detail || event.item.tool : '')), 120);
+      sink({
+        type: 'event',
+        event: transient({ kind: 'notice', level: 'info', code: 'auto_approval', text: `${allow ? '已自动允许' : '已自动拒绝'}：${what}` }, `auto:${key}`),
+      });
+      return;
+    }
     sink({ type: 'event', event });
   };
 
@@ -225,6 +260,16 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
       sink({ type: 'config', model: current ?? model });
       return current ?? model;
     },
+    async setEffort(effort: string) {
+      const { effort: now } = await setConfig('reasoning_effort', effort);
+      sink({ type: 'config', effort: now ?? effort });
+      return now ?? effort;
+    },
+    async setPermissionMode(mode: PermissionMode) {
+      policy = mode === 'bypassPermissions' && !req.allowBypass ? policy : DSH_PRESET[mode] ? mode : 'default';
+      sink({ type: 'config', permissionMode: policy });
+      return policy;
+    },
     interrupt() {
       for (const key of [...pending.keys()]) handle.respond(key, 'deny');
       queue.length = 0;
@@ -251,11 +296,11 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
         : await rpc.request('session/new', { cwd: req.cwd, mcpServers: [] });
       if (typeof res.sessionId === 'string') sessionId = res.sessionId;
       resolveSid(sessionId);
-      let { models, current } = modelsOf(res.configOptions);
+      let { models, current, effort } = modelsOf(res.configOptions);
       // 启动时指定的模型 / 推理强度：会话建立后再设
-      if (req.model && req.model !== 'default' && req.model !== current) ({ models, current } = await setConfig('model', req.model));
-      if (req.effort) await setConfig('reasoning_effort', req.effort).catch(() => undefined);
-      sink({ type: 'config', model: current, models });
+      if (req.model && req.model !== 'default' && req.model !== current) ({ models, current, effort } = await setConfig('model', req.model));
+      if (req.effort && req.effort !== effort) effort = (await setConfig('reasoning_effort', req.effort).catch(() => null))?.effort ?? effort;
+      sink({ type: 'config', model: current, models, effort, permissionMode: policy });
       sink({ type: 'state', state, sessionId });
       ready = true;
       drain();

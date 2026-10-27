@@ -74,6 +74,13 @@ export interface SessionSummary {
   originalTitle?: string;
 }
 
+/** 会话上次用的运行选项（服务端记的；没有时权限模式取 agent 自己记录的） */
+export interface RunPrefs {
+  model?: string;
+  effort?: string;
+  permissionMode?: PermissionMode;
+}
+
 export interface EventWindow {
   events: UnifiedEvent[];
   nextBefore: number | null;
@@ -141,7 +148,7 @@ export type LiveMessage =
   | { type: 'delta'; block: 'text' | 'thinking'; text: string }
   | { type: 'delta_reset' }
   | { type: 'state'; state: RunState; sessionId?: string; error?: string; exitCode?: number | null }
-  | { type: 'config'; model?: string; permissionMode?: PermissionMode; models?: ModelInfo[] };
+  | { type: 'config'; model?: string; permissionMode?: PermissionMode; models?: ModelInfo[]; effort?: string };
 
 export interface Me {
   authRequired: boolean;

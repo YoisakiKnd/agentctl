@@ -14,6 +14,7 @@ import {
   type EventWindow,
   type Line,
   type ModelInfo,
+  type PermissionMode,
   type QuotaSnapshot,
   type ReplayOptions,
   type RunHandle,
@@ -29,6 +30,15 @@ import { probeCodexModels, probeCodexQuota, startCodexRun } from './live.ts';
 import { humanPrompt, isTurnStart, parseLine, type ParseCtx } from './parse.ts';
 
 type Rec = Record<string, unknown>;
+
+/** turn_context 里的审批策略 + 沙箱 → 网页上的权限模式（live.ts 的 POLICY 反过来） */
+function modeOfPolicy(approval: unknown, sandbox: unknown): PermissionMode | undefined {
+  if (approval === 'never' && sandbox === 'danger-full-access') return 'bypassPermissions';
+  if (sandbox === 'read-only') return 'plan';
+  if (approval === 'on-request') return 'auto';
+  if (approval === 'untrusted') return 'default';
+  return undefined;
+}
 
 /** 只有这么大以内的文件，discover 直接读全文（Codex 的 rollout 普遍只有几百 KB） */
 const WHOLE_FILE_BYTES = 512 * 1024;
@@ -137,6 +147,7 @@ export class CodexAdapter implements AgentAdapter {
     let model: string | undefined;
     let lastTs: string | undefined;
     let turns = 0;
+    let permissionMode: PermissionMode | undefined;
 
     for (const { line } of [...head, ...tail]) {
       const payload = (line.payload ?? {}) as Rec;
@@ -149,6 +160,7 @@ export class CodexAdapter implements AgentAdapter {
       }
       if (line.type === 'turn_context') {
         if (typeof payload.model === 'string') model = payload.model;
+        permissionMode = modeOfPolicy(payload.approval_policy, (payload.sandbox_policy as Rec | undefined)?.type) ?? permissionMode;
         if (!cwd && typeof payload.cwd === 'string') cwd = payload.cwd;
       }
       if (!preview) {
@@ -176,6 +188,7 @@ export class CodexAdapter implements AgentAdapter {
       updatedAt: lastTs ?? new Date(st.mtimeMs).toISOString(),
       preview,
       subagent,
+      permissionMode,
     };
   }
 

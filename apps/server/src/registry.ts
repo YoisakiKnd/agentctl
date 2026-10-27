@@ -1,8 +1,8 @@
 import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentAdapter, EventWindow, SessionSummary, UsageBucket } from '@agentctl/core';
-import type { Annotation, IndexDb } from './db.ts';
+import type { AgentAdapter, EventWindow, ModelInfo, SessionSummary, UsageBucket } from '@agentctl/core';
+import type { Annotation, IndexDb, RunPrefs } from './db.ts';
 
 export interface AgentInfo {
   id: string;
@@ -133,6 +133,32 @@ export class Registry {
   /** 会话文件刚被 agent 写过（运行结束、新会话落盘），下次 list 必须重扫 */
   invalidate(): void {
     this.lastRefresh = 0;
+  }
+
+  /**
+   * 这个会话该用的运行选项：网页上次用过的（存在索引库里）优先；
+   * 没有的话，权限模式取 agent 自己在会话文件里记的最近一次（终端里切的也算）。
+   */
+  prefs(session: SessionSummary): RunPrefs {
+    const saved = this.db.getPrefs(session.id) ?? {};
+    return { permissionMode: session.permissionMode, ...saved };
+  }
+
+  savePrefs(id: string, patch: RunPrefs): void {
+    this.db.patchPrefs(id, patch);
+  }
+
+  /** 运行中的进程自己报的模型列表（DSH 只有建立会话后才给）：记下来，进程不在时也能选 */
+  rememberModels(agent: string, models: ModelInfo[]): void {
+    if (models.length) this.db.setKv(`models:${agent}`, JSON.stringify(models));
+  }
+
+  cachedModels(agent: string): ModelInfo[] {
+    try {
+      return JSON.parse(this.db.getKv(`models:${agent}`) ?? '[]') as ModelInfo[];
+    } catch {
+      return [];
+    }
   }
 
   annotation(id: string): Annotation {

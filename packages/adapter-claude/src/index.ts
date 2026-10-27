@@ -126,6 +126,7 @@ export class ClaudeAdapter implements AgentAdapter {
       updatedAt: facts.lastTs ?? new Date(mtime).toISOString(),
       preview: facts.preview,
       unknownTypes: Object.keys(facts.unknown).length ? facts.unknown : undefined,
+      permissionMode: facts.permissionMode,
     };
   }
 

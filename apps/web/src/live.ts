@@ -19,9 +19,11 @@ export interface LiveView {
   /** 进程当前的模型，以及它自己报的可选模型（DSH 的 ACP 在建立会话后才给） */
   model: string | null;
   models: ModelInfo[] | null;
+  /** 进程当前的推理强度（DSH 会报） */
+  effort: string | null;
 }
 
-const IDLE: LiveView = { events: [], draft: null, state: null, error: '', permissionMode: null, model: null, models: null };
+const IDLE: LiveView = { events: [], draft: null, state: null, error: '', permissionMode: null, model: null, models: null, effort: null };
 
 /**
  * 订阅一次运行的事件流（SSE）。服务端先回放该运行的全部事件再接实时，
@@ -42,12 +44,13 @@ export function useLiveRun(runId: string | null): LiveView {
     let permissionMode: PermissionMode | null = null;
     let model: string | null = null;
     let models: ModelInfo[] | null = null;
+    let effort: string | null = null;
     let frame = 0;
 
     // 流式增量一秒几十条，合并到下一帧再渲染
     const flush = () => {
       frame = 0;
-      setView({ events: order.map((u) => byUid.get(u)!), draft, state, error, permissionMode, model, models });
+      setView({ events: order.map((u) => byUid.get(u)!), draft, state, error, permissionMode, model, models, effort });
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(flush);
@@ -81,6 +84,7 @@ export function useLiveRun(runId: string | null): LiveView {
           if (msg.permissionMode) permissionMode = msg.permissionMode;
           if (msg.model) model = msg.model;
           if (msg.models?.length) models = msg.models;
+          if (msg.effort !== undefined) effort = msg.effort;
           break;
         case 'state':
           state = msg.state;

@@ -462,3 +462,14 @@ M4 剩余：Cursor（本机未安装，无数据）。
 | 心跳 | 服务端每 20 秒协议级 ping + 应用层 `{type:'ping'}`，两轮无 pong 断开；浏览器 50 秒没收到任何消息就丢弃旧连接立即重连，`visibilitychange` / `online` 时也检查 |
 
 M4 剩余：Cursor（本机未安装，无数据）。
+
+## 19. 0.7.1：运行选项记忆、DSH 权限预设
+
+| 项 | 实现 / 实测 |
+|---|---|
+| 记忆 | `session_prefs` 表按会话存 {model, effort, permissionMode}：进程启动时、运行中切换成功后写入；`GET /api/sessions/:id` 返回 `prefs`（没存过时权限模式取会话文件里记的）。`send` / `runs` 请求里没带的字段才用 prefs 补，网页总是显式带上三项，`'default'` / 空串 = 明确回到默认 |
+| 会话文件里的模式 | Claude：任意行上的 `permissionMode`（头尾扫描，本机 3137 行 auto / 8 行 default）；Codex：`turn_context` 的 `approval_policy` + `sandbox_policy.type`（POLICY 的反推）；DSH：`permission/preset` 记录 |
+| DSH 权限 | `DSH_PERMISSION_MODE` 只在 `session/new` 时生效并记成 `permission/preset`；`session/resume` 沿用会话里记的（实测换环境变量续接不会追加新记录）。ACP 不处理 `/permission`（会作为普通消息发给模型）。所以运行中切换只改网页的应答策略：完全权限自动同意、仅可查看自动拒绝 `session/request_permission`，并推一条 notice |
+| DSH 推理强度 | `session/set_config_option` 的 `reasoning_effort`，`RunHandle.setEffort` |
+| DSH 模型列表 | ACP 只在建立会话后报 configOptions，离线探测会建空会话或往已有会话追加 `session/end-seed`；改为把运行时报的列表记进 `kv` |
+| Agent 预设 | ACP 的 `session/new` 直接 `ctx.agents.create`，不经过 `agentPresets.mount`；用 `--patch` 插入预设注册表后新会话依旧拿到全部 24 个工具。要支持只能接 DSH 自己的网页服务（Typert RPC），或写一个 DSH 插件在 `agent/created` 时 `select` 预设 |
