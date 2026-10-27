@@ -27,7 +27,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.7.1' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.8.0' };
 
 /** 网页的权限模式 → Codex 的审批策略 + 沙箱。没有 acceptEdits 的对应物，按 auto 处理 */
 const POLICY: Record<PermissionMode, { approval: string; sandbox: string; sandboxPolicy: Rec }> = {

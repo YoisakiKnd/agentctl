@@ -213,17 +213,55 @@ export interface QuotaWindow {
 }
 
 export interface QuotaEntry {
-  agent: AgentId;
+  /** claude / codex / custom:<uuid> */
+  id: string;
+  /** 内置订阅源对应的 agent；自定义订阅源没有 */
+  agent?: AgentId;
+  kind: 'cli' | 'json' | 'deepseek';
   name: string;
+  enabled: boolean;
   plan?: string;
   windows?: QuotaWindow[];
   credits?: { enabled: boolean; balance?: string; unlimited?: boolean; usedPercent?: number };
+  balance?: { amount: number; unit?: string; lowBelow?: number };
   blocked?: boolean;
   fetchedAt?: string;
   error?: string;
+  /** 自定义订阅源的配置（密钥已打码） */
+  config?: Record<string, unknown>;
 }
 
 export interface QuotaReport {
   agents: QuotaEntry[];
   warnPercent: number;
+  settings: { resetMinUsed: number; disabled: string[] };
+}
+
+export type ChannelKind = 'ntfy' | 'bark' | 'telegram' | 'webhook' | 'browser';
+
+export interface NotifyChannel {
+  id: string;
+  kind: ChannelKind;
+  name: string;
+  config: Record<string, string>;
+  events: string[];
+  enabled: boolean;
+}
+
+export interface ChannelField {
+  key: string;
+  label: string;
+  secret?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
+export interface NotifyItem {
+  id: number;
+  at: number;
+  event: 'reset' | 'warn' | 'low' | 'test';
+  source?: string;
+  title: string;
+  body: string;
+  deliveries?: { channel: string; ok: boolean; error?: string }[];
 }

@@ -13,6 +13,9 @@ import type {
   UsageReport,
   QuotaReport,
   RunPrefs,
+  ChannelField,
+  NotifyChannel,
+  NotifyItem,
 } from './types';
 
 export interface RunOptions {
@@ -112,6 +115,23 @@ export const api = {
     }),
   /** 套餐额度；force 让服务端立刻去问 CLI（30 秒内重复会用缓存） */
   quota: (force?: boolean) => request<QuotaReport>(`/api/quota${force ? '?refresh=1' : ''}`),
+  quotaSettings: (patch: { resetMinUsed?: number; disabled?: string[] }) =>
+    request<{ settings: QuotaReport['settings'] }>('/api/quota/settings', { method: 'POST', body: JSON.stringify(patch) }),
+  saveSource: (body: { id?: string; kind?: string; name?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
+    request<{ id: string }>('/api/quota/sources', { method: 'POST', body: JSON.stringify(body) }),
+  deleteSource: (id: string) => request<{ ok: boolean }>(`/api/quota/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  testSource: (body: { id?: string; kind: string; config: Record<string, unknown> }) =>
+    request<{ snapshot: { windows: QuotaWindowLite[]; balance?: { amount: number; unit?: string } }; raw: string }>('/api/quota/sources/test', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  channels: () => request<{ channels: NotifyChannel[]; fields: Record<string, ChannelField[]>; events: { id: string; label: string }[] }>('/api/notify/channels'),
+  saveChannel: (body: { id?: string; kind?: string; name?: string; config?: Record<string, string>; events?: string[]; enabled?: boolean }) =>
+    request<{ channel: NotifyChannel }>('/api/notify/channels', { method: 'POST', body: JSON.stringify(body) }),
+  deleteChannel: (id: string) => request<{ ok: boolean }>(`/api/notify/channels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  testChannel: (id: string) =>
+    request<{ deliveries: NotifyItem['deliveries'] }>(`/api/notify/channels/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+  notifications: (after = 0) => request<{ items: NotifyItem[] }>(`/api/notifications${after ? `?after=${after}` : ''}`),
   tags: () => request<{ tags: { tag: string; count: number }[] }>('/api/tags'),
   models: (agent: string) => request<{ models: ModelInfo[] }>(`/api/agents/${agent}/models`),
   setModel: (runId: string, model: string) =>
@@ -147,5 +167,12 @@ export const api = {
   stop: (runId: string) => request<{ ok: boolean }>(`/api/runs/${runId}/stop`, { method: 'POST' }),
   streamUrl: (runId: string) => `/api/runs/${runId}/stream`,
 };
+
+export interface QuotaWindowLite {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetsAt?: string;
+}
 
 export { HttpError };

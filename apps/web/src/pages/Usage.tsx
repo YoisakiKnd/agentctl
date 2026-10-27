@@ -461,11 +461,12 @@ export default function Usage({ days, agent }: { days: number; agent?: string })
 /** 套餐额度：订阅制 agent 的 5 小时 / 每周窗口（Claude、Codex） */
 function QuotaCards() {
   const { data } = useQuota();
-  if (!data?.agents.length) return null;
+  const sources = data?.agents.filter((q) => q.enabled) ?? [];
+  if (!data || !sources.length) return null;
   return (
     <section className="quota-cards">
-      {data.agents.map((q) => (
-        <div className="card quota-card" key={q.agent}>
+      {sources.map((q) => (
+        <div className="card quota-card" key={q.id}>
           <QuotaAgent q={q} warn={data.warnPercent} />
         </div>
       ))}

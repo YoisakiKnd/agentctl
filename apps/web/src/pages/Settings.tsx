@@ -3,9 +3,8 @@ import { api } from '../api';
 import { AgentBadge } from '../components/AgentBadge';
 import Icon, { type IconName } from '../components/Icon';
 import AppShell from '../components/Layout';
-import { QuotaAgent } from '../components/Quota';
+import { ChannelsSection, SourcesSection } from '../components/NotifySettings';
 import { formatBytes, formatCost, formatDateTime, homeShorten } from '../format';
-import { useQuota } from '../store';
 import { setThemePref, useTheme, type ThemePref } from '../theme';
 import type { AgentInfo, Stats } from '../types';
 import { AGENT_LABEL } from '../types';
@@ -29,7 +28,6 @@ export default function Settings({ onLogout, authRequired }: { onLogout: () => v
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState('');
   const { pref } = useTheme();
-  const quota = useQuota();
 
   useEffect(() => {
     api
@@ -91,23 +89,8 @@ export default function Settings({ onLogout, authRequired }: { onLogout: () => v
           </div>
         </section>
 
-        <section className="card section">
-          <div className="section__head">
-            <h2 className="section__title">套餐额度</h2>
-            <span className="section__hint num">
-              用到 {quota.data?.warnPercent ?? 80}% 时在会话列表和会话页提醒（<span className="mono">quotaWarnPercent</span>）；每 10 分钟查一次，不花钱
-            </span>
-          </div>
-          {quota.data?.agents.length ? (
-            <div className="quota-grid">
-              {quota.data.agents.map((q) => (
-                <QuotaAgent key={q.agent} q={q} warn={quota.data!.warnPercent} />
-              ))}
-            </div>
-          ) : (
-            <p className="section__empty">{quota.error || '正在查询…'}</p>
-          )}
-        </section>
+        <SourcesSection />
+        <ChannelsSection />
 
         <section className="card section">
           <div className="section__head">

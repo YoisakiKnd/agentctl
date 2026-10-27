@@ -17,6 +17,7 @@ import type { RunInfo, RunManager } from './runs.ts';
 import type { ShellKind, ShellManager } from './shells.ts';
 import { usageReport } from './usage.ts';
 import type { QuotaService } from './quota.ts';
+import { CHANNEL_FIELDS, EVENTS, maskConfig, type NotifyService } from './notify.ts';
 
 export interface Ctx {
   cfg: Config;
@@ -24,6 +25,7 @@ export interface Ctx {
   runs: RunManager;
   shells: ShellManager;
   quota: QuotaService;
+  notify: NotifyService;
   throttle: LoginThrottle;
   version: string;
   remote: boolean;
@@ -382,10 +384,102 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
 
   /* ── 套餐额度 ─────────────────────────────────────────── */
 
-  // 每 10 分钟后台问一次；refresh=1 立刻去问（30 秒内重复刷新会直接用缓存）
+  // 内置的每 10 分钟后台问一次，自定义订阅源按各自间隔；refresh=1 立刻去问（30 秒内重复刷新会直接用缓存）
   app.get('/api/quota', async (req) => {
     const q = req.query as { refresh?: string };
-    return { agents: await ctx.quota.list(q.refresh === '1'), warnPercent: Math.min(Math.max(Number(cfg.quotaWarnPercent) || 80, 1), 100) };
+    return {
+      agents: await ctx.quota.list(q.refresh === '1'),
+      warnPercent: Math.min(Math.max(Number(cfg.quotaWarnPercent) || 80, 1), 100),
+      settings: ctx.quota.settings(),
+    };
+  });
+
+  app.post('/api/quota/settings', async (req) => {
+    try {
+      return { settings: ctx.quota.saveSettings((req.body ?? {}) as Record<string, never>) };
+    } catch (err) {
+      throw new BadRequest((err as Error).message);
+    }
+  });
+
+  // 自定义订阅源：新增 / 修改（带 id）
+  app.post('/api/quota/sources', async (req) => {
+    const body = (req.body ?? {}) as { id?: unknown; kind?: unknown; name?: unknown; config?: unknown; enabled?: unknown };
+    try {
+      const row = ctx.quota.saveSource({
+        id: typeof body.id === 'string' ? body.id : undefined,
+        kind: typeof body.kind === 'string' ? body.kind : undefined,
+        name: typeof body.name === 'string' ? body.name : undefined,
+        config: body.config && typeof body.config === 'object' ? (body.config as Record<string, unknown>) : undefined,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      });
+      return { id: `custom:${row.id}` };
+    } catch (err) {
+      throw new BadRequest((err as Error).message);
+    }
+  });
+
+  app.delete('/api/quota/sources/:id', async (req) => {
+    ctx.quota.deleteSource((req.params as { id: string }).id);
+    return { ok: true };
+  });
+
+  // 测试一份配置：真的去拉一次接口，返回解析结果与原始返回（不保存）
+  app.post('/api/quota/sources/test', async (req, reply) => {
+    const body = (req.body ?? {}) as { id?: unknown; kind?: unknown; config?: unknown };
+    try {
+      return await ctx.quota.testSource({
+        id: typeof body.id === 'string' ? body.id : undefined,
+        kind: String(body.kind ?? ''),
+        config: body.config && typeof body.config === 'object' ? (body.config as Record<string, unknown>) : {},
+      });
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+  });
+
+  /* ── 提醒渠道 ─────────────────────────────────────────── */
+
+  app.get('/api/notify/channels', async () => ({
+    channels: ctx.notify.channels().map((c) => ({ ...c, config: maskConfig(c.kind, c.config) })),
+    fields: CHANNEL_FIELDS,
+    events: EVENTS,
+  }));
+
+  app.post('/api/notify/channels', async (req) => {
+    const body = (req.body ?? {}) as { id?: unknown; kind?: unknown; name?: unknown; config?: unknown; events?: unknown; enabled?: unknown };
+    try {
+      const row = ctx.notify.saveChannel({
+        id: typeof body.id === 'string' ? body.id : undefined,
+        kind: String(body.kind ?? ''),
+        name: typeof body.name === 'string' ? body.name : undefined,
+        config: body.config && typeof body.config === 'object' ? (body.config as Record<string, unknown>) : {},
+        events: body.events,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      });
+      return { channel: { ...row, config: maskConfig(row.kind, row.config) } };
+    } catch (err) {
+      throw new BadRequest((err as Error).message);
+    }
+  });
+
+  app.delete('/api/notify/channels/:id', async (req) => {
+    ctx.notify.deleteChannel((req.params as { id: string }).id);
+    return { ok: true };
+  });
+
+  // 发一条测试消息，只发给这个渠道
+  app.post('/api/notify/channels/:id/test', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!ctx.notify.channels().some((c) => c.id === id)) return reply.code(404).send({ error: '渠道不存在' });
+    const log = await ctx.notify.send({ event: 'test', title: 'agentctl 测试消息', body: '能看到这条，说明提醒渠道配置正确。' }, id);
+    return { deliveries: log.deliveries };
+  });
+
+  // 提醒记录：网页轮询它弹 toast / 浏览器通知（after = 上次看到的最大 id）
+  app.get('/api/notifications', async (req) => {
+    const after = Number((req.query as { after?: string }).after ?? 0);
+    return { items: ctx.notify.log(Number.isFinite(after) && after > 0 ? after : 0) };
   });
 
   /* ── 用量统计 ─────────────────────────────────────────── */

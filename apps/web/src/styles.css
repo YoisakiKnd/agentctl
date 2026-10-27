@@ -3484,3 +3484,352 @@ mark {
     display: none;
   }
 }
+
+/* ── 订阅源 / 提醒渠道 ──────────────────────────────────── */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.switch.is-on {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.switch.is-on .switch__knob {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rowlist {
+  display: grid;
+}
+
+.srcrow,
+.chrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: start;
+  padding: 14px 0;
+}
+
+.srcrow + .srcrow,
+.chrow + .chrow,
+.logrow + .logrow {
+  border-top: 1px solid var(--border);
+}
+
+.srcrow.is-off .srcrow__main,
+.chrow.is-off .chrow__main {
+  opacity: 0.5;
+}
+
+.srcrow > .subform,
+.chrow > .subform {
+  grid-column: 1 / -1;
+}
+
+.srcrow__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.srcrow__kind {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-3);
+  margin-right: 4px;
+}
+
+.chrow__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.chrow__result {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.addbtn {
+  margin-top: 8px;
+}
+
+.subform {
+  display: grid;
+  gap: 14px;
+  margin-top: 6px;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.subform .input {
+  background: var(--surface);
+}
+
+.subform__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.formgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.formgrid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field__note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.field--check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+  height: 36px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.field--check input {
+  accent-color: var(--accent);
+}
+
+.field--inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.input--narrow {
+  width: 64px;
+  text-align: right;
+}
+
+.testresult {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.testresult__ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ok);
+}
+
+.testresult summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.logrow {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.logrow__time {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.logrow__title {
+  font-weight: 500;
+}
+
+.logrow__body {
+  color: var(--text-2);
+}
+
+.logrow__deliv {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.balance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+
+.balance__label {
+  color: var(--text-2);
+}
+
+.balance__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.balance.is-low .balance__value {
+  color: var(--danger);
+}
+
+/* 右下角的提醒 */
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 100;
+  display: grid;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 10px 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: toast-in 0.2s ease-out;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.toast > .icon {
+  margin-top: 1px;
+  color: var(--ok);
+}
+
+.toast--warn,
+.toast--low {
+  border-left-color: var(--warn);
+}
+
+.toast--warn > .icon,
+.toast--low > .icon {
+  color: var(--warn);
+}
+
+.toast--test {
+  border-left-color: var(--focus);
+}
+
+.toast--test > .icon {
+  color: var(--focus);
+}
+
+.toast__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast__title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toast__text {
+  color: var(--text-2);
+}
+
+@media (max-width: 900px) {
+  .formgrid,
+  .formgrid--3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .srcrow,
+  .chrow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .srcrow__actions {
+    justify-content: flex-end;
+  }
+
+  .logrow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .logrow__deliv {
+    justify-content: flex-start;
+  }
+
+  .toasts {
+    right: 16px;
+    left: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    width: auto;
+  }
+}

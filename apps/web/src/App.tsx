@@ -13,6 +13,7 @@ import Usage from './pages/Usage';
 const Shell = lazy(() => import('./pages/Shell'));
 import Login from './pages/Login';
 import { Logo } from './components/Layout';
+import Notifier from './components/Notifier';
 
 export default function App() {
   const route = useRoute();
@@ -53,17 +54,25 @@ export default function App() {
     return null;
   }
 
+  let page: React.ReactNode;
   if (route.name === 'shell') {
-    return (
+    page = (
       <Suspense fallback={<div className="splash"><Logo size={28} /></div>}>
         <Shell id={route.id} kind={route.kind} />
       </Suspense>
     );
-  }
-  if (route.name === 'session') return <Session id={route.id} at={route.at} />;
-  if (route.name === 'search') return <Search q={route.q} agent={route.agent} />;
-  if (route.name === 'new') return <NewSession cwd={route.cwd} agent={route.agent} />;
-  if (route.name === 'usage') return <Usage days={route.days} agent={route.agent} />;
-  if (route.name === 'settings') return <Settings authRequired={me.authRequired} onLogout={refreshMe} />;
-  return <Dashboard />;
+  } else if (route.name === 'session') page = <Session id={route.id} at={route.at} />;
+  else if (route.name === 'search') page = <Search q={route.q} agent={route.agent} />;
+  else if (route.name === 'new') page = <NewSession cwd={route.cwd} agent={route.agent} />;
+  else if (route.name === 'usage') page = <Usage days={route.days} agent={route.agent} />;
+  else if (route.name === 'settings') page = <Settings authRequired={me.authRequired} onLogout={refreshMe} />;
+  else page = <Dashboard />;
+
+  // 套餐刷新等提醒在任何页面都弹
+  return (
+    <>
+      {page}
+      <Notifier />
+    </>
+  );
 }

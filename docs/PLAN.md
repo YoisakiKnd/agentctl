@@ -473,3 +473,15 @@ M4 剩余：Cursor（本机未安装，无数据）。
 | DSH 推理强度 | `session/set_config_option` 的 `reasoning_effort`，`RunHandle.setEffort` |
 | DSH 模型列表 | ACP 只在建立会话后报 configOptions，离线探测会建空会话或往已有会话追加 `session/end-seed`；改为把运行时报的列表记进 `kv` |
 | Agent 预设 | ACP 的 `session/new` 直接 `ctx.agents.create`，不经过 `agentPresets.mount`；用 `--patch` 插入预设注册表后新会话依旧拿到全部 24 个工具。要支持只能接 DSH 自己的网页服务（Typert RPC），或写一个 DSH 插件在 `agent/created` 时 `select` 预设 |
+
+## 20. 0.8.0：套餐刷新提醒、订阅源、提醒渠道
+
+| 项 | 实现 / 实测 |
+|---|---|
+| 刷新判定 | 每次取到新数据与 `kv.quota:last` 里的上一次比：用量下降且（重置时间往后挪 ≥1 分钟，或上一次的重置时间已过）；没有重置时间的源要求骤降 ≥10 个点。刷新前用量 < `resetMinUsed`（默认 10%）不提醒——Codex 0% 的 5 小时窗口重置时间一直在滚，实测每次查询都在变 |
+| 及时性 | 用过的窗口按最近的重置时间 + 45 秒设一个定时器专门确认；其余每分钟检查哪些源到了各自的间隔（内置 10 分钟） |
+| 其他事件 | 越过 `quotaWarnPercent` → warn；余额跌破 `lowBelow` → low；余额增加 ≥1% → reset（到账） |
+| 订阅源 | `quota_source` 表；json：字段路径 `a.b[0].c`，百分比可由 已用/剩余 + 总量 算出，时间戳自动识别秒 / 毫秒 / 日期串；deepseek：`GET /user/balance` |
+| 渠道 | `notify_channel` 表；ntfy 用 JSON 发布（Title 头不支持中文）、Bark `/push`、Telegram `sendMessage`、Webhook POST JSON；10 秒超时，失败原因取 `err.cause.code` |
+| 网页 | `notify_log` 表（留最近 500 条）；页面每 30 秒取 `after=上次最大 id`，第一次只记位置不弹历史；有「浏览器通知」渠道且已授权时另弹系统通知（需安全上下文） |
+| 测试 | 本地假接口 + 本地 webhook 接收端：用量 30→85→5 依次收到 warn、reset；余额 12.5→8→58 依次收到 low、到账；坏地址的渠道记失败不影响其他渠道 |

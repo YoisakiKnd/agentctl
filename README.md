@@ -11,7 +11,7 @@
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **全文搜索**：一次扫所有 agent 的全部会话（不建索引），只匹配人能读到的内容（提问、回复、思考、命令、输出、diff），点结果直接跳到会话里的那一条并高亮。本机约 600MB 会话一次约 2.5 秒。
-- **套餐额度提醒**：Claude Code、Codex 的 5 小时 / 每周额度常驻侧栏，快用完时在会话列表和输入框上方提醒。数据由各自 CLI 提供，不花钱。
+- **套餐额度与刷新提醒**：Claude Code、Codex 的 5 小时 / 每周额度常驻侧栏（CLI 自己查，不花钱），还能添加任意 JSON 接口或 DeepSeek 余额作为订阅源。额度刷新、快用完、余额不足时提醒：网页右下角，以及 ntfy / Bark / Telegram / Webhook / 浏览器通知。
 - **用量统计**：每个 agent 每天花了多少钱、多少 token，按模型、按会话拆开看。Claude 的花费以它自己的记账为准，按回复摊到各天；Codex、DSH 只有 token。
 - **置顶、标签、改名**：给会话起自己的标题、打标签、置顶，看板按标签筛选。只存在 agentctl 的索引库里，不改 agent 的文件。
 - **改文件看 diff**：Claude 的 Edit / MultiEdit / Write、Codex 的 apply_patch / FileChange 都显示为可展开的着色 diff。
@@ -180,6 +180,10 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/sessions/:id/events?through=` | 跳转：窗口以这个偏移所在的行结尾 |
 | GET | `/api/search?q=&agent=` | 全文搜索；最多 200 处、单会话 20 处、15 秒上限，超出时 `truncated: true` |
 | GET | `/api/quota?refresh=` | 套餐额度（Claude、Codex 的 5 小时 / 每周窗口）；`refresh=1` 立即去问 CLI |
+| POST | `/api/quota/settings` | 提醒设置 `{resetMinUsed?, disabled?}` |
+| POST · DELETE | `/api/quota/sources[/:id]` | 自定义订阅源增改删；`POST /api/quota/sources/test` 按配置试拉一次 |
+| GET · POST · DELETE | `/api/notify/channels[/:id]` | 提醒渠道；`POST /api/notify/channels/:id/test` 发测试消息 |
+| GET | `/api/notifications?after=` | 提醒记录（网页据此弹提示） |
 | GET | `/api/usage?days=&agent=` | 用量：按天 × agent、按 agent、按模型、前 20 个会话；`days=0` 为全部 |
 | POST | `/api/sessions/:id/annotation` | 注解 `{pinned?, tags?, title?}`，缺省字段不改，`title: ""` 恢复原标题 |
 | GET | `/api/tags` | 所有标签及使用次数 |

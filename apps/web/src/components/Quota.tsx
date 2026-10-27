@@ -44,7 +44,7 @@ function Meter({ w, warn, blocked, compact }: { w: QuotaWindow; warn: number; bl
   return (
     <div className={`meter meter--${level}${compact ? ' meter--compact' : ''}`}>
       <div className="meter__head">
-        <span className="meter__label">{w.label}</span>
+        <span className="meter__label">{w.label || '额度'}</span>
         <span className="meter__value num">
           {level !== 'ok' ? <Icon name="alert" size={12} /> : null}
           {Math.round(w.usedPercent)}%
@@ -75,7 +75,7 @@ function ago(iso?: string): string {
 
 export function QuotaAgent({ q, warn, compact }: { q: QuotaEntry; warn: number; compact?: boolean }) {
   return (
-    <div className="quota" style={{ '--agent': `var(--${q.agent})` } as React.CSSProperties}>
+    <div className="quota" style={{ '--agent': q.agent ? `var(--${q.agent})` : 'var(--text-3)' } as React.CSSProperties}>
       <div className="quota__head">
         <span className="quota__dot" aria-hidden="true" />
         <span className="quota__name">{q.name}</span>
@@ -84,9 +84,18 @@ export function QuotaAgent({ q, warn, compact }: { q: QuotaEntry; warn: number; 
       </div>
       {q.windows?.length ? (
         q.windows.map((w) => <Meter key={w.id} w={w} warn={warn} blocked={q.blocked} compact={compact} />)
+      ) : q.balance ? (
+        <div className={`balance${q.balance.lowBelow !== undefined && q.balance.amount < q.balance.lowBelow ? ' is-low' : ''}`}>
+          <span className="balance__label">余额</span>
+          <span className="balance__value num">
+            {q.balance.lowBelow !== undefined && q.balance.amount < q.balance.lowBelow ? <Icon name="alert" size={12} /> : null}
+            {q.balance.amount.toLocaleString()} {q.balance.unit ?? ''}
+          </span>
+        </div>
       ) : (
-        <div className="quota__empty">{q.error ? `取不到：${q.error}` : '正在查询…'}</div>
+        <div className="quota__empty">{q.error ? `取不到：${q.error}` : q.enabled ? '正在查询…' : '已停用'}</div>
       )}
+      {q.error && (q.windows?.length || q.balance) ? <div className="quota__empty">最近一次失败：{q.error}</div> : null}
       {q.credits?.enabled ? (
         <div className="quota__credits num">
           额外额度{q.credits.unlimited ? '：不限' : q.credits.balance ? `余额 ${q.credits.balance}` : q.credits.usedPercent !== undefined ? `已用 ${Math.round(q.credits.usedPercent)}%` : '已开启'}
@@ -121,12 +130,13 @@ export function QuotaPanel() {
       }
       return next;
     });
-  if (!data?.agents.length) return null;
+  const sources = data?.agents.filter((q) => q.enabled) ?? [];
+  if (!data || !sources.length) return null;
   const warn = data.warnPercent;
-  const worst = data.agents.flatMap((q) => (q.windows ?? []).map((w) => levelOf(w.usedPercent, warn, q.blocked)));
+  const worst = sources.flatMap((q) => (q.windows ?? []).map((w) => levelOf(w.usedPercent, warn, q.blocked)));
   const alert = worst.includes('critical') ? 'critical' : worst.includes('warn') ? 'warn' : 'ok';
-  const fetched = data.agents.map((q) => q.fetchedAt).filter(Boolean).sort()[0];
-  const top = Math.max(0, ...data.agents.flatMap((q) => (q.windows ?? []).map((w) => w.usedPercent)));
+  const fetched = sources.map((q) => q.fetchedAt).filter(Boolean).sort()[0];
+  const top = Math.max(0, ...sources.flatMap((q) => (q.windows ?? []).map((w) => w.usedPercent)));
   const peak = `最高 ${Math.round(top)}%`;
   return (
     <section className={`side-quota side-quota--${alert}`}>
@@ -139,8 +149,8 @@ export function QuotaPanel() {
       </button>
       {open ? (
         <>
-          {data.agents.map((q) => (
-            <QuotaAgent key={q.agent} q={q} warn={warn} compact />
+          {sources.map((q) => (
+            <QuotaAgent key={q.id} q={q} warn={warn} compact />
           ))}
           <div className="side-quota__foot">
             <span>{ago(fetched)}</span>
@@ -174,14 +184,14 @@ export function QuotaAlert({ agent }: { agent?: AgentId }) {
   if (!data) return null;
   const warn = data.warnPercent;
   const hits = data.agents
-    .filter((q) => !agent || q.agent === agent)
+    .filter((q) => q.enabled && (!agent || q.agent === agent))
     .flatMap((q) =>
       (q.windows ?? [])
         .map((w) => ({ q, w, level: levelOf(w.usedPercent, warn, q.blocked && w.usedPercent >= 100) }))
         .filter((h) => h.level !== 'ok'),
     );
   const gone = dismissed();
-  const keyOf = (h: (typeof hits)[number]) => `${h.q.agent}:${h.w.id}:${h.w.resetsAt ?? ''}:${h.level}`;
+  const keyOf = (h: (typeof hits)[number]) => `${h.q.id}:${h.w.id}:${h.w.resetsAt ?? ''}:${h.level}`;
   const shown = hits.filter((h) => !gone.has(keyOf(h)));
   if (!shown.length) return null;
   const critical = shown.some((h) => h.level === 'critical');

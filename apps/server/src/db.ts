@@ -9,6 +9,37 @@ export interface RefinedRow {
   preview?: string;
 }
 
+export type RowTable = 'quota_source' | 'notify_channel';
+
+export interface StoredRow {
+  id: string;
+  kind: string;
+  name: string;
+  config: Record<string, unknown>;
+  /** 只有提醒渠道有：订阅了哪些事件 */
+  events?: string[];
+  enabled: boolean;
+}
+
+export interface NotifyLog {
+  id: number;
+  at: number;
+  event: string;
+  source?: string;
+  title: string;
+  body: string;
+  deliveries?: { channel: string; ok: boolean; error?: string }[];
+}
+
+function parseObj(raw: unknown): Record<string, unknown> {
+  try {
+    const v = JSON.parse(String(raw ?? '{}')) as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /** 会话上次用的运行选项：刷新、换设备、进程退出后再发消息都沿用它 */
 export interface RunPrefs {
   model?: string;
@@ -67,6 +98,32 @@ export class IndexDb {
         id    TEXT PRIMARY KEY,
         prefs TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS quota_source (
+        id      TEXT PRIMARY KEY,
+        kind    TEXT NOT NULL,
+        name    TEXT NOT NULL,
+        config  TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS notify_channel (
+        id      TEXT PRIMARY KEY,
+        kind    TEXT NOT NULL,
+        name    TEXT NOT NULL,
+        config  TEXT NOT NULL,
+        events  TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS notify_log (
+        id     INTEGER PRIMARY KEY AUTOINCREMENT,
+        at     INTEGER NOT NULL,
+        event  TEXT NOT NULL,
+        source TEXT,
+        title  TEXT NOT NULL,
+        body   TEXT NOT NULL,
+        deliveries TEXT
       );
       CREATE TABLE IF NOT EXISTS kv (
         key   TEXT PRIMARY KEY,
@@ -201,6 +258,87 @@ export class IndexDb {
 
   setKv(key: string, value: string): void {
     this.db.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+
+  getJson<T>(key: string, fallback: T): T {
+    const raw = this.getKv(key);
+    if (raw === undefined) return fallback;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  setJson(key: string, value: unknown): void {
+    this.setKv(key, JSON.stringify(value));
+  }
+
+  /* ── 订阅源 / 提醒渠道：同一种"带 JSON 配置的行" ───────────── */
+
+  listRows(table: RowTable): StoredRow[] {
+    const rows = this.db.prepare(`SELECT * FROM ${table} ORDER BY created_at`).all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      kind: String(r.kind),
+      name: String(r.name),
+      config: parseObj(r.config),
+      events: r.events === undefined ? undefined : (parseObj(r.events) as unknown as string[]),
+      enabled: r.enabled === 1,
+    }));
+  }
+
+  putRow(table: RowTable, row: StoredRow): void {
+    const cols = table === 'notify_channel' ? ', events' : '';
+    const vals = table === 'notify_channel' ? ', ?' : '';
+    const args: (string | number)[] = [row.id, row.kind, row.name, JSON.stringify(row.config), row.enabled ? 1 : 0, Date.now()];
+    if (table === 'notify_channel') args.push(JSON.stringify(row.events ?? []));
+    this.db
+      .prepare(
+        `INSERT INTO ${table} (id, kind, name, config, enabled, created_at${cols}) VALUES (?, ?, ?, ?, ?, ?${vals})
+         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, name=excluded.name, config=excluded.config, enabled=excluded.enabled${
+           table === 'notify_channel' ? ', events=excluded.events' : ''
+         }`,
+      )
+      .run(...args);
+  }
+
+  deleteRow(table: RowTable, id: string): void {
+    this.db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+  }
+
+  addLog(entry: Omit<NotifyLog, 'id'>): number {
+    const r = this.db
+      .prepare('INSERT INTO notify_log (at, event, source, title, body, deliveries) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(entry.at, entry.event, entry.source ?? null, entry.title, entry.body, JSON.stringify(entry.deliveries ?? []));
+    // 只留最近 500 条
+    this.db.prepare('DELETE FROM notify_log WHERE id <= ?').run(Number(r.lastInsertRowid) - 500);
+    return Number(r.lastInsertRowid);
+  }
+
+  updateLogDeliveries(id: number, deliveries: NotifyLog['deliveries']): void {
+    this.db.prepare('UPDATE notify_log SET deliveries = ? WHERE id = ?').run(JSON.stringify(deliveries ?? []), id);
+  }
+
+  listLog(after = 0, limit = 50): NotifyLog[] {
+    const rows = this.db
+      .prepare('SELECT * FROM notify_log WHERE id > ? ORDER BY id DESC LIMIT ?')
+      .all(after, limit) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: Number(r.id),
+      at: Number(r.at),
+      event: String(r.event),
+      source: r.source === null ? undefined : String(r.source),
+      title: String(r.title),
+      body: String(r.body),
+      deliveries: (() => {
+        try {
+          return JSON.parse(String(r.deliveries ?? '[]')) as NotifyLog['deliveries'];
+        } catch {
+          return [];
+        }
+      })(),
+    }));
   }
 
   close(): void {
