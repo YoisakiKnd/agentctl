@@ -42,13 +42,13 @@ const DSH_MODES: ModeOption[] = [
   },
 ];
 
-/** Codex 没有"只自动接受编辑"这一档；plan 对应只读沙箱 */
+/** 和 Codex 自己的 /permissions 一一对应（Codex 没有「只自动接受编辑」这一档） */
 const CODEX_MODES: ModeOption[] = [
-  { value: 'default', label: '逐个审批', hint: '除只读的安全命令外都要你确认（untrusted）' },
-  { value: 'auto', label: 'Auto 模式', hint: '在工作区沙箱里运行，由 Codex 判断何时需要你确认（on-request）' },
-  { value: 'plan', label: '只读', hint: '只读沙箱：能看不能改，需要写入时会来问你' },
-  { value: 'bypassPermissions', label: '跳过所有权限', hint: '不询问、不加沙箱（danger-full-access）' },
-];
+  { value: 'default', label: '默认', hint: 'Codex 的 Default：工作区内读写、跑命令；访问工作区外或联网时由你审批' },
+  { value: 'auto', label: 'Auto-review', hint: '同默认，但审批交给 Codex 的审核子代理按风险判断，不来问你' },
+  { value: 'plan', label: '只读', hint: 'Codex 的 Read Only：只能看；改文件、联网时由你审批' },
+  { value: 'bypassPermissions', label: '完全访问', hint: 'Codex 的 Full Access：不加沙箱、不审批，可以改工作区外的文件、联网' },
+]
 
 export function modesFor(agent: AgentId): ModeOption[] {
   if (agent === 'dsh') return DSH_MODES;

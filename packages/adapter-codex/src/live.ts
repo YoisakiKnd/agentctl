@@ -27,15 +27,22 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.8.1' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.8.2' };
 
-/** 网页的权限模式 → Codex 的审批策略 + 沙箱。没有 acceptEdits 的对应物，按 auto 处理 */
-const POLICY: Record<PermissionMode, { approval: string; sandbox: string; sandboxPolicy: Rec }> = {
-  default: { approval: 'untrusted', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite() },
-  acceptEdits: { approval: 'on-request', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite() },
-  auto: { approval: 'on-request', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite() },
-  plan: { approval: 'on-request', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', networkAccess: false } },
-  bypassPermissions: { approval: 'never', sandbox: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' } },
+/**
+ * 网页的权限模式 → Codex 自己的权限预设（与 TUI 里 /permissions 一致）：
+ * - default → Default：工作区内可读写、跑命令，越界（工作区外、联网）要审批，审批由你来批；
+ * - auto → Auto-review：同 Default，但审批交给 Codex 的审核子代理（approvalsReviewer: auto_review）；
+ * - plan → Read Only：只读，改文件、联网要审批；
+ * - bypassPermissions → Full Access：不加沙箱、不审批。
+ * acceptEdits 在 Codex 里没有对应物，按 Default 处理。
+ */
+const POLICY: Record<PermissionMode, { approval: string; sandbox: string; sandboxPolicy: Rec; reviewer: 'user' | 'auto_review' }> = {
+  default: { approval: 'on-request', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite(), reviewer: 'user' },
+  acceptEdits: { approval: 'on-request', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite(), reviewer: 'user' },
+  auto: { approval: 'on-request', sandbox: 'workspace-write', sandboxPolicy: workspaceWrite(), reviewer: 'auto_review' },
+  plan: { approval: 'on-request', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', networkAccess: false }, reviewer: 'user' },
+  bypassPermissions: { approval: 'never', sandbox: 'danger-full-access', sandboxPolicy: { type: 'dangerFullAccess' }, reviewer: 'user' },
 };
 
 function workspaceWrite(): Rec {
@@ -117,6 +124,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
     if (modeChanged) {
       params.approvalPolicy = POLICY[mode].approval;
       params.sandboxPolicy = POLICY[mode].sandboxPolicy;
+      params.approvalsReviewer = POLICY[mode].reviewer;
     }
     rpc.request('turn/start', params).catch((err: Error) => {
       turnRunning = false;
@@ -349,7 +357,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       await rpc.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null });
       rpc.notify('initialized');
       const policy = POLICY[mode];
-      const common: Rec = { cwd: req.cwd, approvalPolicy: policy.approval, sandbox: policy.sandbox };
+      const common: Rec = { cwd: req.cwd, approvalPolicy: policy.approval, sandbox: policy.sandbox, approvalsReviewer: policy.reviewer };
       if (model) common.model = model;
       const res = req.resumeSessionId
         ? await rpc.request('thread/resume', { threadId: req.resumeSessionId, ...common })

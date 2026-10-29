@@ -31,12 +31,30 @@ import { humanPrompt, isTurnStart, parseLine, type ParseCtx } from './parse.ts';
 
 type Rec = Record<string, unknown>;
 
-/** turn_context 里的审批策略 + 沙箱 → 网页上的权限模式（live.ts 的 POLICY 反过来） */
-function modeOfPolicy(approval: unknown, sandbox: unknown): PermissionMode | undefined {
+/** 从 end 往前按 1MB 一段找最近的 turn_context（最多翻 16MB），找不到返回 undefined */
+async function lastTurnContext(file: string, end: number): Promise<Rec | undefined> {
+  for (let cursor = end, scanned = 0; cursor > 0 && scanned < 16 * 1024 * 1024; ) {
+    const win = await readLinesBefore(file, cursor, 1024 * 1024);
+    for (let i = win.lines.length - 1; i >= 0; i--) {
+      const text = win.lines[i].text;
+      if (!text.includes('"turn_context"')) continue;
+      const d = safeJsonParse(text) as Rec | null;
+      if (d?.type === 'turn_context') return (d.payload ?? {}) as Rec;
+    }
+    if (win.start >= cursor) break;
+    scanned += cursor - win.start;
+    cursor = win.start;
+  }
+  return undefined;
+}
+
+/** turn_context 里的审批策略 + 沙箱 + 审批人 → 网页上的权限模式（live.ts 的 POLICY 反过来） */
+function modeOfPolicy(approval: unknown, sandbox: unknown, reviewer: unknown): PermissionMode | undefined {
   if (approval === 'never' && sandbox === 'danger-full-access') return 'bypassPermissions';
   if (sandbox === 'read-only') return 'plan';
-  if (approval === 'on-request') return 'auto';
-  if (approval === 'untrusted') return 'default';
+  if (sandbox === 'workspace-write' || approval === 'on-request' || approval === 'untrusted') {
+    return reviewer === 'auto_review' || reviewer === 'guardian_subagent' ? 'auto' : 'default';
+  }
   return undefined;
 }
 
@@ -160,7 +178,7 @@ export class CodexAdapter implements AgentAdapter {
       }
       if (line.type === 'turn_context') {
         if (typeof payload.model === 'string') model = payload.model;
-        permissionMode = modeOfPolicy(payload.approval_policy, (payload.sandbox_policy as Rec | undefined)?.type) ?? permissionMode;
+        permissionMode = modeOfPolicy(payload.approval_policy, (payload.sandbox_policy as Rec | undefined)?.type, payload.approvals_reviewer) ?? permissionMode;
         if (!cwd && typeof payload.cwd === 'string') cwd = payload.cwd;
       }
       if (!preview) {
@@ -168,6 +186,11 @@ export class CodexAdapter implements AgentAdapter {
         if (p) preview = oneLine(p, 160);
       }
       if (typeof line.timestamp === 'string' && (!lastTs || line.timestamp > lastTs)) lastTs = line.timestamp;
+    }
+    // 大文件尾部没有 turn_context（最后一轮输出很长）：往前找最近的一条，权限模式以它为准
+    if (!whole && !tail.some(({ line }) => line.type === 'turn_context')) {
+      const ctx = await lastTurnContext(file, st.size - TAIL_BYTES);
+      if (ctx) permissionMode = modeOfPolicy(ctx.approval_policy, (ctx.sandbox_policy as Rec | undefined)?.type, ctx.approvals_reviewer) ?? permissionMode;
     }
     // 读了全文才能数准轮次；大文件交给 refine
     if (whole) turns = head.filter(({ line }) => isTurnStart(line)).length;

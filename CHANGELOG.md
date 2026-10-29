@@ -1,5 +1,15 @@
 # 更新日志
 
+## 0.8.2 · 2026-10-29 —— Codex 权限模式对齐 Codex 自己的预设
+
+- **修复：Codex 的权限模式和 Codex 本身对不上**。之前的「Auto 模式」只是 on-request + 工作区沙箱，审批照样来问你，并不是 Codex 的 Auto-review；「逐个审批」用的 untrusted 比 Codex 的默认还严。现在四档和 Codex 里 `/permissions` 一一对应：
+  - 默认 = Codex Default：工作区内读写、跑命令，访问工作区外或联网由你审批；
+  - Auto-review = 同上，但审批交给 Codex 的审核子代理（`approvalsReviewer: auto_review`）；
+  - 只读 = Read Only；
+  - 完全访问 = Full Access。
+  - 新建、续接、运行中切换都会带上审批人设置；实测切换前后两轮的 turn_context 分别记成 auto_review 和 user。
+- 已有 Codex 会话的权限模式也按审批人识别：在 Codex 里用 Auto-review 跑过的会话，网页上显示 Auto-review。大文件尾部没有轮次记录时往前找最近的一条。
+
 ## 0.8.1 · 2026-10-29 —— 选择真正记住、新建会话可以新建目录
 
 - **修复：重启浏览器后输入框下面的选择又变回去了**。之前只有发了消息才会记下；只改了下拉框没发，或者在新建会话页改的（存在浏览器本地，有的浏览器关闭时会清掉），重启浏览器就丢了。现在下拉框一改就存到服务端：
