@@ -212,6 +212,11 @@ export function RunOptionFields({
   );
 }
 
+/** 三项都显式带上：'default' / 空串表示"就用默认"，免得服务端拿上次的选项补 */
+export function explicit(o: RunOptions): RunOptions {
+  return { model: o.model ?? 'default', effort: o.effort ?? '', permissionMode: o.permissionMode ?? 'default' };
+}
+
 /** 提交时按 Enter（排除输入法组字中的 Enter，否则中文用户选词就会把消息发出去） */
 export function isSubmitKey(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
   if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return false;
@@ -239,6 +244,7 @@ export default function Composer({
   runEffort,
   onSetEffort,
   effortPending,
+  onSaveOpts,
 }: {
   agent: AgentId;
   path: string;
@@ -265,6 +271,8 @@ export default function Composer({
   onSetEffort?: (effort: string) => Promise<void>;
   /** 运行中改强度要等下次启动进程才生效（Claude 的 --effort） */
   effortPending?: boolean;
+  /** 进程不在时改了下拉框：马上存到服务端（浏览器重启后仍是这个选择） */
+  onSaveOpts?: (opts: RunOptions) => void;
 }) {
   const [text, setText] = useState('');
   const fetchedModels = useModels(agent);
@@ -274,6 +282,7 @@ export default function Composer({
   const setOpts = (next: RunOptions) => {
     touched.current = true;
     setOptsState(next);
+    onSaveOpts?.(explicit(next));
   };
   const initialKey = JSON.stringify(initialOpts ?? {});
   useEffect(() => {
@@ -292,7 +301,7 @@ export default function Composer({
     setError('');
     try {
       // 三项都显式带上：'default' / 空串表示"就用默认"，免得服务端拿会话上次的选项补
-      await onSend(value, { model: opts.model ?? 'default', effort: opts.effort ?? '', permissionMode: opts.permissionMode ?? 'default' });
+      await onSend(value, explicit(opts));
       touched.current = false;
       setText('');
       input.current?.focus();

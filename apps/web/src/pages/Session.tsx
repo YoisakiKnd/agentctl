@@ -512,6 +512,9 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             initialOpts={prefs}
             runEffort={live.effort ?? prefs?.effort ?? null}
             effortPending={session.agent === 'claude'}
+            onSaveOpts={(o) => {
+              void api.savePrefs(id, o).catch(() => undefined);
+            }}
             onSetEffort={runId ? setEffort : undefined}
           />
         ) : session ? (

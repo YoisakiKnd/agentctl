@@ -3833,3 +3833,47 @@ mark {
     width: auto;
   }
 }
+
+/* 新建会话：目录检查与「在这里新建项目」确认 */
+.field__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.field__status.is-new {
+  color: var(--ok);
+}
+
+.field__status.is-error {
+  color: var(--danger);
+}
+
+.confirmbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--r);
+  font-size: 13.5px;
+}
+
+.confirmbar > .icon {
+  color: var(--accent);
+}
+
+.confirmbar__text {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.confirmbar__actions {
+  display: flex;
+  gap: 8px;
+}

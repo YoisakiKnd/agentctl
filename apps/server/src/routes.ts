@@ -1,5 +1,5 @@
-import { realpath, stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { access, constants, mkdir, realpath, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { oneLine, searchQuery, type ApprovalDecision, type EventWindow, type PermissionMode, type SearchHit, type SessionSummary } from '@agentctl/core';
 import {
@@ -150,6 +150,68 @@ async function checkedCwd(cfg: Config, raw: unknown): Promise<string> {
   }
   if (!isPathAllowed(cfg, real)) throw new BadRequest('该目录不在 allowedRoots 白名单内');
   return real;
+}
+
+interface DirInfo {
+  /** 展开 ~ 之后的绝对路径 */
+  path: string;
+  exists: boolean;
+  /** 不存在时：能不能新建（最近的已存在祖先是目录，且解开符号链接后仍在白名单内） */
+  creatable: boolean;
+  error?: string;
+}
+
+/** 看一个工作目录：存不存在、能不能新建。不改任何东西 */
+async function inspectDir(cfg: Config, raw: unknown): Promise<DirInfo> {
+  if (typeof raw !== 'string' || !raw.trim()) return { path: '', exists: false, creatable: false, error: '缺少工作目录' };
+  const path = expandHome(raw.trim()).replace(/\/+$/, '') || '/';
+  if (!isAbsolute(path)) return { path, exists: false, creatable: false, error: '工作目录必须是绝对路径' };
+  try {
+    const real = await realpath(path);
+    if (!(await stat(real)).isDirectory()) return { path, exists: false, creatable: false, error: '这个路径是文件，不是目录' };
+    if (!isPathAllowed(cfg, real)) return { path, exists: true, creatable: false, error: '该目录不在 allowedRoots 白名单内' };
+    return { path, exists: true, creatable: false };
+  } catch {
+    /* 不存在：往上找最近的已存在祖先 */
+  }
+  let parent = dirname(path);
+  while (parent !== dirname(parent)) {
+    try {
+      await stat(parent);
+      break;
+    } catch {
+      parent = dirname(parent);
+    }
+  }
+  try {
+    const real = await realpath(parent);
+    if (!(await stat(real)).isDirectory()) return { path, exists: false, creatable: false, error: `${parent} 不是目录` };
+    // 按解开符号链接后的真实位置判断白名单，防止借符号链接把目录建到白名单外
+    if (!isPathAllowed(cfg, join(real, relative(parent, path)))) {
+      return { path, exists: false, creatable: false, error: '该目录不在 allowedRoots 白名单内' };
+    }
+    // 服务进程没有写权限的地方（/proc、别人的目录）建不了
+    try {
+      await access(real, constants.W_OK);
+    } catch {
+      return { path, exists: false, creatable: false, error: `没有权限在 ${parent} 下新建目录` };
+    }
+    return { path, exists: false, creatable: true };
+  } catch {
+    return { path, exists: false, creatable: false, error: `目录不存在：${raw}` };
+  }
+}
+
+/** 新建工作目录（含中间目录）；只在用户确认过的新建会话请求里调用 */
+async function createDir(cfg: Config, raw: unknown): Promise<void> {
+  const info = await inspectDir(cfg, raw);
+  if (info.exists) return;
+  if (!info.creatable) throw new BadRequest(info.error ?? '不能在这里新建目录');
+  try {
+    await mkdir(info.path, { recursive: true, mode: 0o755 });
+  } catch (err) {
+    throw new BadRequest(`新建目录失败：${(err as Error).message}`);
+  }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
@@ -707,9 +769,35 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     return { model, resolved };
   });
 
+  // 新建会话页输入目录时实时检查：存在？不存在的话能不能新建
+  app.get('/api/fs/check', async (req) => inspectDir(cfg, (req.query as { path?: string }).path));
+
+  // 下拉框一改就记下（不必等发消息）：浏览器重启、换设备后仍是上次的选择
+  app.post('/api/sessions/:id/prefs', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const session = await registry.get(id);
+    if (!session) return reply.code(404).send({ error: '会话不存在' });
+    const opts = effectiveOptions((req.body ?? {}) as RunBody, {}, cfg);
+    const patch = { model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode };
+    registry.savePrefs(id, patch);
+    registry.saveDefaults(session.agent, patch);
+    return { prefs: registry.prefs(session) };
+  });
+
+  // 每个 agent 上次用的选项：新建会话页的默认值，也是没记过选项的会话的默认值
+  app.get('/api/run-defaults', async () => ({ defaults: registry.allDefaults() }));
+
+  app.post('/api/run-defaults/:agent', async (req, reply) => {
+    const { agent } = req.params as { agent: string };
+    if (!registry.adapter(agent)) return reply.code(404).send({ error: '没有这个 agent' });
+    const opts = effectiveOptions((req.body ?? {}) as RunBody, {}, cfg);
+    registry.saveDefaults(agent, { model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode });
+    return { ok: true };
+  });
+
   // 新建会话
   app.post('/api/runs', async (req, reply) => {
-    const body = (req.body ?? {}) as RunBody & { agent?: unknown; cwd?: unknown; prompt?: unknown };
+    const body = (req.body ?? {}) as RunBody & { agent?: unknown; cwd?: unknown; prompt?: unknown; createDir?: unknown };
     const agentId = typeof body.agent === 'string' ? body.agent : 'claude';
     const adapter = registry.adapter(agentId);
     if (!adapter?.run) return reply.code(400).send({ error: `${agentId} 尚未支持实时运行` });
@@ -718,6 +806,12 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       return reply.code(400).send({ error: `找不到 ${adapter.meta.binary} 可执行文件` });
     }
     const prompt = promptOf(body.prompt);
+    // 目录不存在：网页上确认过「在这里新建项目」才建，否则告诉网页去问用户
+    const dir = await inspectDir(cfg, body.cwd);
+    if (!dir.exists && dir.creatable) {
+      if (body.createDir !== true) return reply.code(409).send({ error: `目录不存在：${dir.path}`, code: 'cwd_missing', path: dir.path });
+      await createDir(cfg, body.cwd);
+    }
     const cwd = await checkedCwd(cfg, body.cwd);
     const opts = effectiveOptions(body, {}, cfg);
     const run = runs.start({ adapter, binary, cwd, prompt, title: oneLine(prompt, 80), ...opts, allowBypass: cfg.allowBypassPermissions });
@@ -730,6 +824,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     }
     const key = run.info().sessionKey;
     if (key) registry.savePrefs(key, opts);
+    registry.saveDefaults(agentId, opts);
     registry.invalidate();
     return { run: run.info() };
   });
@@ -771,6 +866,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     });
     rememberRunModels(run);
     registry.savePrefs(id, { model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode });
+    registry.saveDefaults(session.agent, { model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode });
     return { run: run.info() };
   });
 

@@ -192,7 +192,10 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |
 | POST | `/api/runs/:id/effort` | 运行中切换推理强度 `{effort}`（DSH） |
 | POST | `/api/sessions/:id/send` | 往会话发消息：有活进程就写 stdin，否则 `--resume` 起一个；没带的运行选项沿用会话上次的 |
-| POST | `/api/runs` | 新建会话 `{cwd, prompt, model?, permissionMode?}`，等 agent 分配 id 后返回 |
+| POST | `/api/runs` | 新建会话 `{cwd, prompt, model?, permissionMode?, createDir?}`，等 agent 分配 id 后返回；目录不存在时返回 409，带 `createDir: true` 重发才新建 |
+| GET | `/api/fs/check?path=` | 检查工作目录：存在？不存在的话能不能新建 |
+| POST | `/api/sessions/:id/prefs` | 存这个会话的运行选项（下拉框一改就存） |
+| GET · POST | `/api/run-defaults[/:agent]` | 每个 agent 上次用的运行选项（新建会话页的默认值） |
 | GET | `/api/runs` | 运行中的进程 |
 | WS | `/api/sessions/:id/shell?kind=agent\|shell` | 终端：`{type:input\|resize\|kill}` 上行，`{type:ready\|output\|exit\|error\|ping}` 下行；接上时先发屏幕快照 |
 | GET | `/api/runs/:id/stream` | SSE：先回放该运行的全部事件，再推实时 |

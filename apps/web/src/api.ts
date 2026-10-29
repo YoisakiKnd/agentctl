@@ -139,7 +139,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ model }),
     }),
-  startRun: (body: { agent?: AgentId; cwd: string; prompt: string } & RunOptions) =>
+  /** 下拉框一改就存：这个会话的选项，同时也成为这个 agent 的默认 */
+  savePrefs: (id: string, opts: RunOptions) =>
+    request<{ prefs: RunPrefs }>(`/api/sessions/${encodeURIComponent(id)}/prefs`, { method: 'POST', body: JSON.stringify(opts) }),
+  runDefaults: () => request<{ defaults: Record<string, RunPrefs> }>('/api/run-defaults'),
+  saveRunDefaults: (agent: AgentId, opts: RunOptions) =>
+    request<{ ok: boolean }>(`/api/run-defaults/${agent}`, { method: 'POST', body: JSON.stringify(opts) }),
+  checkDir: (path: string, signal?: AbortSignal) =>
+    request<{ path: string; exists: boolean; creatable: boolean; error?: string }>(`/api/fs/check?${new URLSearchParams({ path })}`, { signal }),
+  startRun: (body: { agent?: AgentId; cwd: string; prompt: string; createDir?: boolean } & RunOptions) =>
     request<{ run: RunInfo }>('/api/runs', { method: 'POST', body: JSON.stringify(body) }),
   send: (sessionId: string, text: string, opts: RunOptions = {}) =>
     request<{ run: RunInfo }>(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {

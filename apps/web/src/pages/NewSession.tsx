@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api, type RunOptions } from '../api';
-import { isSubmitKey, RunOptionFields } from '../components/Composer';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, HttpError, type RunOptions } from '../api';
+import { explicit, isSubmitKey, RunOptionFields } from '../components/Composer';
 import { homeShorten, projectName } from '../format';
 import { navigate, sessionHref } from '../router';
 import { AGENT_LABEL, type AgentId, type AgentInfo, type SessionSummary } from '../types';
@@ -8,15 +8,11 @@ import { AgentBadge } from '../components/AgentBadge';
 import Icon from '../components/Icon';
 import AppShell from '../components/Layout';
 
-const OPTS_KEY = 'agentctl.new-opts';
-
-function savedOpts(agent: AgentId): RunOptions {
-  try {
-    const raw = localStorage.getItem(`${OPTS_KEY}.${agent}`);
-    return raw ? (JSON.parse(raw) as RunOptions) : {};
-  } catch {
-    return {};
-  }
+interface DirInfo {
+  path: string;
+  exists: boolean;
+  creatable: boolean;
+  error?: string;
 }
 
 /** 在某个目录里新开一个会话（Claude Code / Codex / DSH） */
@@ -26,18 +22,52 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
   const [agent, setAgent] = useState<AgentId>(initialAgent ?? 'claude');
   const [cwd, setCwd] = useState(initialCwd ?? '');
   const [prompt, setPrompt] = useState('');
-  const [opts, setOptsState] = useState<RunOptions>(() => savedOpts(initialAgent ?? 'claude'));
-  // 每个 agent 记住上次新建时选的模型 / 强度 / 权限模式（只存在这个浏览器里）
+  const [opts, setOptsState] = useState<RunOptions>({});
+  /** 每个 agent 上次用的模型 / 强度 / 权限模式，存在服务端：换浏览器、清缓存都还在 */
+  const defaults = useRef<Record<string, RunOptions>>({});
+  const touched = useRef(false);
   const setOpts = (next: RunOptions) => {
+    touched.current = true;
     setOptsState(next);
-    try {
-      localStorage.setItem(`${OPTS_KEY}.${agent}`, JSON.stringify(next));
-    } catch {
-      /* 存不了就只对这次有效 */
-    }
+    defaults.current[agent] = next;
+    void api.saveRunDefaults(agent, explicit(next)).catch(() => undefined);
   };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [dir, setDir] = useState<DirInfo | null>(null);
+  /** 目录不存在、等用户确认「在这里新建」 */
+  const [confirmCreate, setConfirmCreate] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .runDefaults()
+      .then(({ defaults: d }) => {
+        defaults.current = d as Record<string, RunOptions>;
+        if (!touched.current) setOptsState((d[initialAgent ?? 'claude'] as RunOptions | undefined) ?? {});
+      })
+      .catch(() => undefined);
+  }, [initialAgent]);
+
+  // 输入目录时检查一下：不存在的话提前说明「开始时会新建」
+  useEffect(() => {
+    setConfirmCreate(null);
+    const value = cwd.trim();
+    if (!value) {
+      setDir(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      api
+        .checkDir(value, ctrl.signal)
+        .then(setDir)
+        .catch(() => undefined);
+    }, 300);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [cwd]);
 
   useEffect(() => {
     api
@@ -67,23 +97,24 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
     return out;
   }, [sessions]);
 
-  const start = async () => {
+  const start = async (createDir = false) => {
     if (!cwd.trim() || !prompt.trim() || busy) return;
+    // 目录还不存在：先问一句再建
+    if (!createDir && dir && !dir.exists && dir.creatable && dir.path) {
+      setConfirmCreate(dir.path);
+      return;
+    }
     setBusy(true);
     setError('');
+    setConfirmCreate(null);
     try {
-      const { run } = await api.startRun({
-        agent,
-        cwd: cwd.trim(),
-        prompt,
-        model: opts.model ?? 'default',
-        effort: opts.effort ?? '',
-        permissionMode: opts.permissionMode ?? 'default',
-      });
+      const { run } = await api.startRun({ agent, cwd: cwd.trim(), prompt, createDir, ...explicit(opts) });
       if (!run.sessionKey) throw new Error('agent 没有返回会话 id');
       navigate(sessionHref(run.sessionKey).slice(1));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '启动失败');
+      // 检查之后目录又被删了之类：服务端也会要求确认
+      if (err instanceof HttpError && err.status === 409) setConfirmCreate(dir?.path ?? cwd.trim());
+      else setError(err instanceof Error ? err.message : '启动失败');
       setBusy(false);
     }
   };
@@ -118,7 +149,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                     onClick={() => {
                       setAgent(a.id);
                       // 模型和权限选项各家不同，换 agent 时换成那个 agent 上次的选择
-                      setOptsState(savedOpts(a.id));
+                      setOptsState(defaults.current[a.id] ?? {});
                     }}
                   >
                     <AgentBadge agent={a.id} />
@@ -145,6 +176,19 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                 <option key={c} value={c} />
               ))}
             </datalist>
+            {dir && cwd.trim() ? (
+              dir.error ? (
+                <span className="field__status is-error">
+                  <Icon name="alert" size={12} />
+                  {dir.error}
+                </span>
+              ) : !dir.exists && dir.creatable ? (
+                <span className="field__status is-new">
+                  <Icon name="plus" size={12} />
+                  目录还不存在，开始时会新建 <span className="mono">{homeShorten(dir.path)}</span>
+                </span>
+              ) : null
+            ) : null}
           </label>
 
           {recent.length > 0 ? (
@@ -192,6 +236,22 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
               {busy ? null : <Icon name="send" size={14} />}
             </button>
           </div>
+          {confirmCreate ? (
+            <div className="confirmbar" role="alertdialog" aria-label="新建项目目录">
+              <Icon name="folder" size={16} />
+              <div className="confirmbar__text">
+                将在 <span className="mono">{confirmCreate}</span> 创建新项目，是否继续？
+              </div>
+              <div className="confirmbar__actions">
+                <button type="button" className="btn btn--sm btn--primary" onClick={() => void start(true)} disabled={busy} autoFocus>
+                  创建并开始
+                </button>
+                <button type="button" className="btn btn--sm" onClick={() => setConfirmCreate(null)}>
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : null}
           {error ? <div className="form__error">{error}</div> : null}
         </form>
         <p className="form__note">

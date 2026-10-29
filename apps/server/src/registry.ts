@@ -141,7 +141,27 @@ export class Registry {
    */
   prefs(session: SessionSummary): RunPrefs {
     const saved = this.db.getPrefs(session.id) ?? {};
-    return { permissionMode: session.permissionMode, ...saved };
+    const defaults = this.defaults(session.agent);
+    // 优先级：这个会话自己记的 > 会话文件里记的权限模式 > 这个 agent 上次用的
+    return { ...defaults, ...(session.permissionMode ? { permissionMode: session.permissionMode } : {}), ...saved };
+  }
+
+  defaults(agent: string): RunPrefs {
+    return this.db.getJson<RunPrefs>(`defaults:${agent}`, {});
+  }
+
+  allDefaults(): Record<string, RunPrefs> {
+    return Object.fromEntries(this.adapters.map((a) => [a.id, this.defaults(a.id)]));
+  }
+
+  /** 字段为 undefined 表示"默认"，从记录里去掉 */
+  saveDefaults(agent: string, patch: RunPrefs): void {
+    const next: Record<string, unknown> = { ...this.defaults(agent) };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete next[k];
+      else next[k] = v;
+    }
+    this.db.setJson(`defaults:${agent}`, next);
   }
 
   savePrefs(id: string, patch: RunPrefs): void {
