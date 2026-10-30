@@ -4,6 +4,7 @@ import { homeShorten } from '../format';
 import { useAllowBypass } from '../caps';
 import { EFFORT_LABEL, isAlias, modelLabel, useModels } from '../models';
 import Icon from './Icon';
+import { AttachButton, AttachmentTray, onPasteFiles, useAttachments, useDropZone } from './Attachments';
 import type { AgentId, ModelInfo, PermissionMode, RunState } from '../types';
 
 interface ModeOption {
@@ -251,7 +252,7 @@ export default function Composer({
   state: RunState | null;
   pending: number;
   processAlive: boolean;
-  onSend: (text: string, opts: RunOptions) => Promise<void>;
+  onSend: (text: string, opts: RunOptions, attachments: string[]) => Promise<void>;
   onInterrupt?: () => Promise<void>;
   onStop?: () => Promise<void>;
   /** 当前进程用的模型；进程活着时下拉框直接切换它 */
@@ -292,18 +293,22 @@ export default function Composer({
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
+  const files = useAttachments();
+  const drop = useDropZone(files.add);
   const working = state === 'starting' || state === 'running';
+  const canSend = !busy && !files.uploading && (!!text.trim() || files.ids.length > 0);
 
   const submit = async () => {
     const value = text.trim();
-    if (!value || busy) return;
+    if (!canSend) return;
     setBusy(true);
     setError('');
     try {
       // 三项都显式带上：'default' / 空串表示"就用默认"，免得服务端拿会话上次的选项补
-      await onSend(value, explicit(opts));
+      await onSend(value, explicit(opts), files.ids);
       touched.current = false;
       setText('');
+      files.clear();
       input.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : '发送失败');
@@ -343,7 +348,12 @@ export default function Composer({
             <Icon name="alert" size={14} />有 {pending} 个工具调用等待审批，见上方卡片
           </div>
         ) : null}
-        <div className={`composer__card${working ? ' is-working' : ''}`} onClick={(e) => e.target === e.currentTarget && input.current?.focus()}>
+        <div
+          className={`composer__card${working ? ' is-working' : ''}${drop.over ? ' is-dropping' : ''}`}
+          onClick={(e) => e.target === e.currentTarget && input.current?.focus()}
+          {...drop.props}
+        >
+          <AttachmentTray items={files.items} onRemove={files.remove} />
           <textarea
             ref={input}
             className="composer__input"
@@ -351,6 +361,7 @@ export default function Composer({
             placeholder={placeholder}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onPaste={(e) => onPasteFiles(e, files.add)}
             onKeyDown={(e) => {
               if (isSubmitKey(e)) {
                 e.preventDefault();
@@ -359,6 +370,7 @@ export default function Composer({
             }}
           />
           <div className="composer__bar">
+            <AttachButton onFiles={files.add} />
             <span className="composer__opts">
               {processAlive ? (
                 <>
@@ -410,10 +422,10 @@ export default function Composer({
             ) : null}
             <button
               className="sendbtn"
-              disabled={busy || !text.trim()}
+              disabled={!canSend}
               onClick={() => void submit()}
               aria-label={busy ? '发送中' : '发送'}
-              title={coarse ? '发送' : '发送（Enter；Shift+Enter 换行）'}
+              title={files.uploading ? '附件还在上传' : coarse ? '发送' : '发送（Enter；Shift+Enter 换行）'}
             >
               <Icon name="send" size={17} />
             </button>

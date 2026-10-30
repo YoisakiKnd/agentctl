@@ -6,3 +6,4 @@ export * from './zstd.ts';
 export * from './rpc.ts';
 export * from './search.ts';
 export * from './usage.ts';
+export * from './attachments.ts';

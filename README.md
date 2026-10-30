@@ -8,6 +8,7 @@
 ## 现在能做什么
 
 - **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
+- **粘贴图片、附文件**：截图直接 Ctrl+V，文件可以拖进输入框或点回形针选。Claude、Codex 收到的是原生图片（模型直接看图）；其他文件、以及不支持图片的 DSH，在消息末尾附上本地路径，agent 用读文件的工具自己去读。时间线里显示缩略图和文件名。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
 - **全文搜索**：一次扫所有 agent 的全部会话（不建索引），只匹配人能读到的内容（提问、回复、思考、命令、输出、diff），点结果直接跳到会话里的那一条并高亮。本机约 600MB 会话一次约 2.5 秒。
@@ -151,7 +152,8 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - 回放只读 agent 的会话文件（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`、`~/.pi/agent/sessions`），不写、不移动、不删除；实时运行时由 agent 自己写盘。
 - 不解析任何凭证文件（`~/.claude/settings.json`、`~/.codex/auth.json` 等），只探测存在性。
 - `~/.agentctl/index.db` 是纯索引（标题、轮数、花费、字节偏移），删了下次启动自动重建。
-- 图片只记 `[图片 12.3KB]` 这样的占位，不把 base64 塞进页面。
+- 历史会话里的图片只记 `[图片 12.3KB]` 这样的占位，不把 base64 塞进页面。
+- 网页上加的附件存在 `~/.agentctl/uploads/<id>/<原文件名>`（仅本人可读），发消息时把路径交给 agent。不会自动清理；不需要了可以整个目录删掉，只是旧会话里的缩略图会显示不出来。
 
 ## 仓库结构
 
@@ -191,8 +193,10 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | POST | `/api/runs/:id/model` | 运行中切换模型 `{model}` |
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |
 | POST | `/api/runs/:id/effort` | 运行中切换推理强度 `{effort}`（DSH） |
-| POST | `/api/sessions/:id/send` | 往会话发消息：有活进程就写 stdin，否则 `--resume` 起一个；没带的运行选项沿用会话上次的 |
-| POST | `/api/runs` | 新建会话 `{cwd, prompt, model?, permissionMode?, createDir?}`，等 agent 分配 id 后返回；目录不存在时返回 409，带 `createDir: true` 重发才新建 |
+| POST | `/api/sessions/:id/send` | 往会话发消息 `{text, attachments?}`（附件是上传返回的 id，最多 20 个；有附件时文字可以为空）：有活进程就写 stdin，否则 `--resume` 起一个；没带的运行选项沿用会话上次的 |
+| POST | `/api/uploads?name=&type=` | 上传附件：请求体是文件字节（`application/octet-stream`），单个上限 50MB；返回 `{id, name, mime, bytes, path}` |
+| GET | `/api/uploads/:id/:name` | 取回附件。只有认得的位图（png / jpeg / gif / webp）内联显示，其余一律下载 |
+| POST | `/api/runs` | 新建会话 `{cwd, prompt, attachments?, model?, permissionMode?, createDir?}`，等 agent 分配 id 后返回；目录不存在时返回 409，带 `createDir: true` 重发才新建 |
 | GET | `/api/fs/check?path=` | 检查工作目录：存在？不存在的话能不能新建 |
 | POST | `/api/sessions/:id/prefs` | 存这个会话的运行选项（下拉框一改就存） |
 | GET · POST | `/api/run-defaults[/:agent]` | 每个 agent 上次用的运行选项（新建会话页的默认值） |

@@ -308,8 +308,8 @@ export default function Session({ id, at }: { id: string; at?: number }) {
   }, [toBottom]);
 
   const send = useCallback(
-    async (text: string, opts: RunOptions) => {
-      const { run } = await api.send(id, text, processAlive ? {} : opts);
+    async (text: string, opts: RunOptions, attachments: string[]) => {
+      const { run } = await api.send(id, text, processAlive ? {} : opts, attachments);
       // 从搜索结果跳进来的：发了消息就回到正常的"跟随最新"视图
       if (at !== undefined) {
         navigate(sessionHref(id).slice(1));

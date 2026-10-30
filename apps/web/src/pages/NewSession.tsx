@@ -6,6 +6,7 @@ import { navigate, sessionHref } from '../router';
 import { AGENT_LABEL, type AgentId, type AgentInfo, type SessionSummary } from '../types';
 import { AgentBadge } from '../components/AgentBadge';
 import Icon from '../components/Icon';
+import { AttachButton, AttachmentTray, onPasteFiles, useAttachments, useDropZone } from '../components/Attachments';
 import AppShell from '../components/Layout';
 
 interface DirInfo {
@@ -33,6 +34,9 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
     void api.saveRunDefaults(agent, explicit(next)).catch(() => undefined);
   };
   const [busy, setBusy] = useState(false);
+  const files = useAttachments();
+  const drop = useDropZone(files.add);
+  const hasMessage = !!prompt.trim() || files.ids.length > 0;
   const [error, setError] = useState('');
   const [dir, setDir] = useState<DirInfo | null>(null);
   /** 目录不存在、等用户确认「在这里新建」 */
@@ -98,7 +102,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
   }, [sessions]);
 
   const start = async (createDir = false) => {
-    if (!cwd.trim() || !prompt.trim() || busy) return;
+    if (!cwd.trim() || !hasMessage || files.uploading || busy) return;
     // 目录还不存在：先问一句再建
     if (!createDir && dir && !dir.exists && dir.creatable && dir.path) {
       setConfirmCreate(dir.path);
@@ -108,7 +112,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
     setError('');
     setConfirmCreate(null);
     try {
-      const { run } = await api.startRun({ agent, cwd: cwd.trim(), prompt, createDir, ...explicit(opts) });
+      const { run } = await api.startRun({ agent, cwd: cwd.trim(), prompt, createDir, attachments: files.ids, ...explicit(opts) });
       if (!run.sessionKey) throw new Error('agent 没有返回会话 id');
       navigate(sessionHref(run.sessionKey).slice(1));
     } catch (err) {
@@ -211,10 +215,12 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           <label className="field">
             <span className="field__label">第一条消息</span>
             <textarea
-              className="input form__prompt"
+              className={`input form__prompt${drop.over ? ' is-dropping' : ''}`}
               rows={7}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onPaste={(e) => onPasteFiles(e, files.add)}
+              {...drop.props}
               onKeyDown={(e) => {
                 // 多行表单里回车换行是常态，只认 Ctrl/⌘+Enter
                 if ((e.metaKey || e.ctrlKey) && isSubmitKey(e)) {
@@ -222,16 +228,20 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                   void start();
                 }
               }}
-              placeholder="想让它做什么？（Ctrl / ⌘ + Enter 开始）"
+              placeholder="想让它做什么？（Ctrl / ⌘ + Enter 开始；图片和文件可以直接粘贴或拖进来）"
               autoFocus
             />
           </label>
+          <div className="form__attach">
+            <AttachButton onFiles={files.add} />
+            {files.items.length ? <AttachmentTray items={files.items} onRemove={files.remove} /> : <span className="form__attach-hint">添加图片或文件</span>}
+          </div>
 
           <div className="form__actions">
             <div className="form__opts">
               <RunOptionFields agent={agent} value={opts} onChange={setOpts} />
             </div>
-            <button className="btn btn--primary" type="submit" disabled={busy || !cwd.trim() || !prompt.trim()}>
+            <button className="btn btn--primary" type="submit" disabled={busy || !cwd.trim() || !hasMessage || files.uploading}>
               {busy ? '启动中…' : '开始'}
               {busy ? null : <Icon name="send" size={14} />}
             </button>

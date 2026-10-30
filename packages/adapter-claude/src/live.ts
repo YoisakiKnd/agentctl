@@ -9,12 +9,16 @@
  * 这里吐出的事件与回放同构且 uid 一致，前端可以无缝合并两条数据流。
  */
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import {
+  isImageAttachment,
   oneLine,
   summarizeToolInput,
+  withAttachmentList,
   type ApprovalDecision,
+  type Attachment,
   type Item,
   type ModelInfo,
   type QuotaSnapshot,
@@ -34,6 +38,9 @@ const STDERR_KEEP = 4096;
 
 /** 这些 system 子类型是进程内部状态，时间线上没有阅读价值 */
 const QUIET_SYSTEM = new Set(['init', 'status', 'hook_started', 'hook_progress', 'hook_response', 'thinking_tokens']);
+
+/** API 对单张图片的上限是 5MB（base64 前）；再大的只给路径，让 Read 工具自己缩放后再看 */
+const INLINE_IMAGE_MAX = 3.75 * 1024 * 1024;
 
 interface Pending {
   toolName: string;
@@ -64,7 +71,30 @@ export function buildArgs(req: RunRequest): string[] {
   if (req.permissionMode && req.permissionMode !== 'default') {
     args.push('--permission-mode', req.permissionMode);
   }
+  // 附件存在工作目录之外，加进来 Read 才不用逐个审批
+  if (req.uploadsDir) args.push('--add-dir', req.uploadsDir);
   return args;
+}
+
+/**
+ * 用户消息的 content：图片作为原生图片块放在前面（API 建议图在文字前），
+ * 所有附件的路径都列在文字末尾，agent 需要时能直接读、复制或引用原文件。
+ */
+export function userContent(text: string, attachments?: Attachment[]): string | unknown[] {
+  if (!attachments?.length) return text;
+  const blocks: unknown[] = [];
+  const inlined = new Set<Attachment>();
+  for (const a of attachments) {
+    if (!isImageAttachment(a) || a.bytes > INLINE_IMAGE_MAX) continue;
+    try {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: readFileSync(a.path).toString('base64') } });
+      inlined.add(a);
+    } catch {
+      /* 读不到就只给路径 */
+    }
+  }
+  const full = withAttachmentList(text, attachments, (a) => inlined.has(a));
+  return blocks.length ? [...blocks, { type: 'text', text: full }] : full;
 }
 
 export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
@@ -320,10 +350,10 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
 
   const handle: RunHandle = {
     sessionId: sessionIdPromise,
-    send(text: string) {
+    send(text: string, attachments?: Attachment[]) {
       write({
         type: 'user',
-        message: { role: 'user', content: text },
+        message: { role: 'user', content: userContent(text, attachments) },
         parent_tool_use_id: null,
         session_id: sessionId,
       });
@@ -383,7 +413,7 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
   };
 
   write({ type: 'control_request', request_id: 'init', request: { subtype: 'initialize' } });
-  handle.send(req.prompt);
+  handle.send(req.prompt, req.attachments);
   return handle;
 }
 

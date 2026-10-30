@@ -1,7 +1,7 @@
 import { access, constants, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentAdapter, EventWindow, ModelInfo, SessionSummary, UsageBucket } from '@agentctl/core';
+import { stripAttachmentList, type AgentAdapter, type EventWindow, type ModelInfo, type SessionSummary, type UsageBucket } from '@agentctl/core';
 import type { Annotation, IndexDb, RunPrefs } from './db.ts';
 
 export interface AgentInfo {
@@ -244,8 +244,10 @@ export class Registry {
 
   private annotate(s: SessionSummary): SessionSummary {
     const a = this.notes.get(s.id);
-    const original = s.originalTitle ?? s.title;
-    const base = { ...s, pinned: undefined, tags: undefined, originalTitle: undefined, title: original };
+    // 网页发的附件清单在首条消息末尾，标题和副标题里只留文字（只有附件时留文件名）
+    const original = stripAttachmentList(s.originalTitle ?? s.title);
+    const preview = s.preview && stripAttachmentList(s.preview);
+    const base = { ...s, pinned: undefined, tags: undefined, originalTitle: undefined, title: original, preview };
     if (!a) return base;
     return {
       ...base,

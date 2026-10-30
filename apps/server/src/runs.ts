@@ -3,6 +3,7 @@ import type {
   AgentAdapter,
   AgentId,
   ApprovalDecision,
+  Attachment,
   LiveMessage,
   PermissionMode,
   RunHandle,
@@ -121,6 +122,8 @@ export interface StartOptions {
   binary?: string;
   cwd: string;
   prompt: string;
+  attachments?: Attachment[];
+  uploadsDir?: string;
   title: string;
   resumeSessionId?: string;
   startTurn?: number;
@@ -155,6 +158,8 @@ export class RunManager {
       {
         cwd: opts.cwd,
         prompt: opts.prompt,
+        attachments: opts.attachments,
+        uploadsDir: opts.uploadsDir,
         resumeSessionId: opts.resumeSessionId,
         startTurn: opts.startTurn,
         model: opts.model,

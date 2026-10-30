@@ -8,8 +8,11 @@
  * uid 与磁盘回放一致。用量、本轮耗时这些文件里也会有的东西不从实时流发，免得重复。
  */
 import {
+  isImageAttachment,
   oneLine,
   spawnJsonRpc,
+  withAttachmentList,
+  type Attachment,
   type ApprovalDecision,
   type ModelInfo,
   type PermissionMode,
@@ -27,7 +30,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.8.2' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.9.0' };
 
 /**
  * 网页的权限模式 → Codex 自己的权限预设（与 TUI 里 /permissions 一致）：
@@ -75,7 +78,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
   const pending = new Map<string, Pending>();
   /** item/started 时记下的文件改动，审批卡要显示改哪些文件 */
   const startedChanges = new Map<string, Rec>();
-  const queue: string[] = [];
+  const queue: { text: string; attachments?: Attachment[] }[] = [];
   let mode: PermissionMode = req.permissionMode ?? 'default';
   let modeChanged = false;
   let model = req.model && req.model !== 'default' ? req.model : undefined;
@@ -115,10 +118,13 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
     sink({ type: 'event', event: { ...p.event, item: { ...p.event.item, state: approved ? 'approved' : 'denied' } } });
   };
 
-  const startTurn = (text: string) => {
+  const startTurn = ({ text, attachments }: { text: string; attachments?: Attachment[] }) => {
     turnRunning = true;
     setState('running');
-    const params: Rec = { threadId: sessionId, input: [{ type: 'text', text, text_elements: [] }] };
+    // 图片走 localImage（Codex 自己读文件、缩放）；所有附件的路径都列在文字末尾
+    const input: Rec[] = [{ type: 'text', text: withAttachmentList(text, attachments, isImageAttachment), text_elements: [] }];
+    for (const a of attachments ?? []) if (isImageAttachment(a)) input.push({ type: 'localImage', path: a.path });
+    const params: Rec = { threadId: sessionId, input };
     if (model) params.model = model;
     if (effort) params.effort = effort;
     if (modeChanged) {
@@ -293,9 +299,9 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
 
   const handle: RunHandle = {
     sessionId: sessionIdPromise,
-    send(text: string) {
+    send(text: string, attachments?: Attachment[]) {
       if (exited) throw new Error('agent 进程已退出');
-      queue.push(text);
+      queue.push({ text, attachments });
       if (!turnRunning) setState('running');
       drain();
     },
@@ -376,7 +382,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
     }
   })();
 
-  handle.send(req.prompt);
+  handle.send(req.prompt, req.attachments);
   return handle;
 }
 

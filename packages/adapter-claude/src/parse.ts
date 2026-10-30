@@ -200,6 +200,8 @@ export function parseLine(
     }
     // 给模型看的提示（"下面这条是用户跑的本地命令"），对人没有信息量
     if (/^\s*<local-command-caveat>/.test(joined)) return out;
+    // CLI 把消息里的图片另存一份后补的说明；图片已经显示在用户消息上了
+    if (line.isMeta === true && /^\s*(\[Image: source: [^\]]*\]\s*)+$/.test(joined)) return out;
     if (line.isMeta === true) {
       push({ kind: 'notice', level: 'info', code: 'meta', text: oneLine(joined, 200) });
       return out;

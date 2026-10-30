@@ -1,7 +1,8 @@
+import { createReadStream } from 'node:fs';
 import { access, constants, mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { oneLine, searchQuery, type ApprovalDecision, type EventWindow, type PermissionMode, type SearchHit, type SessionSummary } from '@agentctl/core';
+import { oneLine, searchQuery, type ApprovalDecision, type Attachment, type EventWindow, type PermissionMode, type SearchHit, type SessionSummary } from '@agentctl/core';
 import {
   COOKIE_NAME,
   SESSION_TTL_MS,
@@ -18,6 +19,7 @@ import type { ShellKind, ShellManager } from './shells.ts';
 import { usageReport } from './usage.ts';
 import type { QuotaService } from './quota.ts';
 import { CHANNEL_FIELDS, EVENTS, maskConfig, type NotifyService } from './notify.ts';
+import { MAX_UPLOAD_BYTES, UPLOADS_DIR, findUpload, resolveAttachments, saveUpload } from './uploads.ts';
 
 export interface Ctx {
   cfg: Config;
@@ -130,10 +132,24 @@ function effectiveOptions(body: RunBody, prefs: RunPrefs, cfg: Config) {
   return opts;
 }
 
-function promptOf(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) throw new BadRequest('消息不能为空');
+/** 文字和附件至少有一样；只有附件时文字为空串，适配器会只发附件清单 */
+async function messageOf(text: unknown, rawAttachments: unknown): Promise<{ text: string; attachments: Attachment[] }> {
+  let attachments: Attachment[];
+  try {
+    attachments = await resolveAttachments(rawAttachments);
+  } catch (err) {
+    throw new BadRequest((err as Error).message);
+  }
+  if (text !== undefined && typeof text !== 'string') throw new BadRequest('消息必须是文字');
+  const value = text ?? '';
+  if (!value.trim() && !attachments.length) throw new BadRequest('消息不能为空');
   if (value.length > MAX_PROMPT_CHARS) throw new BadRequest(`消息过长（上限 ${MAX_PROMPT_CHARS} 字符）`);
-  return value;
+  return { text: value.trim() ? value : '', attachments };
+}
+
+/** 运行的标题：文字的第一行；只有附件时用附件名 */
+function titleOf(text: string, attachments: Attachment[]): string {
+  return oneLine(text, 80) || oneLine(attachments.map((a) => a.name).join('、'), 80);
 }
 
 /** 工作目录：绝对路径、真实存在、解开符号链接后仍在白名单内 */
@@ -795,9 +811,42 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     return { ok: true };
   });
 
+  // 附件目录先建好：Claude 每次启动都会 --add-dir 它，不存在会报错
+  await mkdir(UPLOADS_DIR, { recursive: true, mode: 0o700 });
+  // 附件上传：请求体就是文件字节（application/octet-stream），文件名和类型放在查询参数里。
+  // 单独开一个子作用域注册二进制解析器，别的接口仍只收 JSON
+  await app.register(async (scope) => {
+    scope.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: MAX_UPLOAD_BYTES }, (_req, body, done) =>
+      done(null, body),
+    );
+    scope.post('/api/uploads', async (req, reply) => {
+      if (!Buffer.isBuffer(req.body)) return reply.code(415).send({ error: '附件要以 application/octet-stream 上传' });
+      const q = req.query as { name?: unknown; type?: unknown };
+      const u = await saveUpload(req.body, q.name, q.type);
+      return { id: u.id, name: u.name, mime: u.mime, bytes: u.bytes, path: u.path };
+    });
+  });
+
+  // 取回附件（时间线里的缩略图、下载）。只把认识的位图当图片内联显示，
+  // 其余一律按下载处理并禁止嗅探，免得上传的 HTML / SVG 在本站域名下执行脚本
+  app.get('/api/uploads/:id/:name', async (req, reply) => {
+    const { id, name } = req.params as { id: string; name: string };
+    const u = await findUpload(id);
+    if (!u || u.name !== name) return reply.code(404).send({ error: '附件不存在' });
+    const image = u.mime.startsWith('image/');
+    reply
+      .header('content-type', image ? u.mime : 'application/octet-stream')
+      .header('content-length', u.bytes)
+      .header('x-content-type-options', 'nosniff')
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .header('cache-control', 'private, max-age=31536000, immutable')
+      .header('content-disposition', `${image ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(u.name)}`);
+    return reply.send(createReadStream(u.path));
+  });
+
   // 新建会话
   app.post('/api/runs', async (req, reply) => {
-    const body = (req.body ?? {}) as RunBody & { agent?: unknown; cwd?: unknown; prompt?: unknown; createDir?: unknown };
+    const body = (req.body ?? {}) as RunBody & { agent?: unknown; cwd?: unknown; prompt?: unknown; createDir?: unknown; attachments?: unknown };
     const agentId = typeof body.agent === 'string' ? body.agent : 'claude';
     const adapter = registry.adapter(agentId);
     if (!adapter?.run) return reply.code(400).send({ error: `${agentId} 尚未支持实时运行` });
@@ -805,7 +854,7 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     if (adapter.meta.binary && !binary) {
       return reply.code(400).send({ error: `找不到 ${adapter.meta.binary} 可执行文件` });
     }
-    const prompt = promptOf(body.prompt);
+    const { text: prompt, attachments } = await messageOf(body.prompt, body.attachments);
     // 目录不存在：网页上确认过「在这里新建项目」才建，否则告诉网页去问用户
     const dir = await inspectDir(cfg, body.cwd);
     if (!dir.exists && dir.creatable) {
@@ -814,7 +863,17 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     }
     const cwd = await checkedCwd(cfg, body.cwd);
     const opts = effectiveOptions(body, {}, cfg);
-    const run = runs.start({ adapter, binary, cwd, prompt, title: oneLine(prompt, 80), ...opts, allowBypass: cfg.allowBypassPermissions });
+    const run = runs.start({
+      adapter,
+      binary,
+      cwd,
+      prompt,
+      attachments,
+      uploadsDir: UPLOADS_DIR,
+      title: titleOf(prompt, attachments),
+      ...opts,
+      allowBypass: cfg.allowBypassPermissions,
+    });
     rememberRunModels(run);
     try {
       await withTimeout(run.handle.sessionId, SESSION_ID_TIMEOUT_MS, 'agent 启动超时');
@@ -832,14 +891,14 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
   // 往已有会话发消息：有活着的进程就直接写 stdin，否则 --resume 起一个
   app.post('/api/sessions/:id/send', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as RunBody & { text?: unknown };
-    const text = promptOf(body.text);
+    const body = (req.body ?? {}) as RunBody & { text?: unknown; attachments?: unknown };
+    const { text, attachments } = await messageOf(body.text, body.attachments);
     if (shells.get(`${id}:agent`)) {
       return reply.code(409).send({ error: '这个会话正在网页终端里运行 claude，先在终端里退出（/exit）再在这里发消息' });
     }
     const active = runs.forSession(id);
     if (active && active.state !== 'exited') {
-      active.handle.send(text);
+      active.handle.send(text, attachments);
       return { run: active.info() };
     }
 
@@ -858,6 +917,8 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       binary,
       cwd,
       prompt: text,
+      attachments,
+      uploadsDir: UPLOADS_DIR,
       title: session.title,
       resumeSessionId: session.sessionId,
       startTurn: session.turns,

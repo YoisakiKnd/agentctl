@@ -1,3 +1,4 @@
+import type { Attachment } from './attachments.ts';
 import type { AgentId, EventWindow, SessionSummary, UnifiedEvent } from './events.ts';
 import type { SearchHit, SearchQuery } from './search.ts';
 import type { UsageBucket } from './usage.ts';
@@ -101,6 +102,10 @@ export interface RunRequest {
   cwd: string;
   /** 首条用户消息 */
   prompt: string;
+  /** 首条消息带的附件 */
+  attachments?: Attachment[];
+  /** 网页附件的存放目录：agent 要能读到它（Claude 用 --add-dir 加进来） */
+  uploadsDir?: string;
   /** 续接已有会话（agent 自己的 sessionId，不带前缀） */
   resumeSessionId?: string;
   model?: string;
@@ -144,7 +149,7 @@ export interface RunHandle {
   /** 首次拿到 agent 分配的 sessionId 时 resolve；进程先退出则 reject */
   sessionId: Promise<string>;
   /** 追加一条用户消息（进程会排队，不必等上一轮结束） */
-  send(text: string): void;
+  send(text: string, attachments?: Attachment[]): void;
   /** answers：AskUserQuestion 的回答，`{ 问题原文: 选中的选项（多选用 ", " 连接） }` */
   respond(requestId: string, decision: ApprovalDecision, answers?: Record<string, string>): boolean;
   /** 运行中切换权限模式；resolve 为实际生效的模式 */

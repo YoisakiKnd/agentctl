@@ -18,6 +18,15 @@ import type {
   NotifyItem,
 } from './types';
 
+/** 上传好的附件（服务端存成了本地文件） */
+export interface UploadInfo {
+  id: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  path: string;
+}
+
 export interface RunOptions {
   model?: string;
   effort?: string;
@@ -147,12 +156,20 @@ export const api = {
     request<{ ok: boolean }>(`/api/run-defaults/${agent}`, { method: 'POST', body: JSON.stringify(opts) }),
   checkDir: (path: string, signal?: AbortSignal) =>
     request<{ path: string; exists: boolean; creatable: boolean; error?: string }>(`/api/fs/check?${new URLSearchParams({ path })}`, { signal }),
-  startRun: (body: { agent?: AgentId; cwd: string; prompt: string; createDir?: boolean } & RunOptions) =>
+  startRun: (body: { agent?: AgentId; cwd: string; prompt: string; createDir?: boolean; attachments?: string[] } & RunOptions) =>
     request<{ run: RunInfo }>('/api/runs', { method: 'POST', body: JSON.stringify(body) }),
-  send: (sessionId: string, text: string, opts: RunOptions = {}) =>
+  send: (sessionId: string, text: string, opts: RunOptions = {}, attachments: string[] = []) =>
     request<{ run: RunInfo }>(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: 'POST',
-      body: JSON.stringify({ text, ...opts }),
+      body: JSON.stringify({ text, ...opts, ...(attachments.length ? { attachments } : {}) }),
+    }),
+  /** 请求体就是文件字节；一律按 octet-stream 发，免得 .json 之类被服务端当成 JSON 解析 */
+  upload: (file: File, signal?: AbortSignal) =>
+    request<UploadInfo>(`/api/uploads?${new URLSearchParams({ name: file.name, type: file.type })}`, {
+      method: 'POST',
+      body: file,
+      headers: { 'content-type': 'application/octet-stream' },
+      signal,
     }),
   approve: (runId: string, requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) =>
     request<{ ok: boolean }>(`/api/runs/${runId}/approve`, {

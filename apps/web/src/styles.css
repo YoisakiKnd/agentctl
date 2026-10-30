@@ -1711,6 +1711,54 @@ button.pill--tag:hover,
   font-size: 14.5px;
 }
 
+/* 已发送的附件：图片缩略图 + 文件名胶囊 */
+.sent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.msg + .sent {
+  margin-top: 10px;
+}
+
+.bubble > .sent:first-child {
+  margin-top: 0;
+}
+
+.sent__image {
+  display: block;
+  line-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.sent__image img {
+  display: block;
+  max-width: min(260px, 100%);
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.sent__file {
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.sent__file:hover {
+  color: var(--text);
+  border-color: var(--border-2);
+}
+
+.sent__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -2173,6 +2221,140 @@ button.pill--tag:hover,
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border-2));
 }
 
+.composer__card.is-dropping,
+.form__prompt.is-dropping {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent);
+}
+
+/* 待发送的附件 */
+.atray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 10px;
+}
+
+.atray__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  max-width: 220px;
+  padding: 0 26px 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.atray__item--image {
+  width: 52px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.atray__item.is-error {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.atray__thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.atray__icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.atray__item.is-error .atray__icon,
+.atray__badge {
+  color: var(--danger);
+}
+
+.atray__badge {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+
+.atray__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.atray__name {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atray__meta {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atray__item.is-error .atray__meta {
+  color: var(--danger);
+}
+
+.atray__spin {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--text-2) 35%, transparent);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.atray__item--image .atray__spin {
+  right: auto;
+  bottom: auto;
+  inset: 0;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+}
+
+.atray__remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.atray__remove:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.attachbtn {
+  margin-left: -6px;
+}
+
 .composer__input {
   display: block;
   width: 100%;
@@ -2256,6 +2438,11 @@ button.pill--tag:hover,
 
 .composer__error {
   color: var(--danger);
+}
+
+.composer__foot .linkbtn {
+  flex: none;
+  white-space: nowrap;
 }
 
 .readonly {
@@ -2508,6 +2695,27 @@ mark {
 .form__prompt {
   min-height: 140px;
   font-size: 15px;
+}
+
+.form__attach {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -6px 0 16px;
+}
+
+.form__attach .attachbtn {
+  margin-left: 0;
+}
+
+.form__attach .atray {
+  padding: 0;
+}
+
+.form__attach-hint {
+  align-self: center;
+  font-size: 12.5px;
+  color: var(--text-3);
 }
 
 .form__actions {

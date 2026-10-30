@@ -11,6 +11,8 @@
 import {
   oneLine,
   spawnJsonRpc,
+  withAttachmentList,
+  type Attachment,
   type ApprovalDecision,
   type ModelInfo,
   type PermissionMode,
@@ -240,9 +242,10 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
 
   const handle: RunHandle = {
     sessionId: sessionIdPromise,
-    send(text: string) {
+    send(text: string, attachments?: Attachment[]) {
       if (exited) throw new Error('agent 进程已退出');
-      queue.push(text);
+      // DSH 的 ACP 不收图片（promptCapabilities.image = false），附件一律给路径
+      queue.push(withAttachmentList(text, attachments));
       setState('running');
       drain();
     },
@@ -310,6 +313,6 @@ export function startDshRun(req: RunRequest, sink: RunSink): RunHandle {
     }
   })();
 
-  handle.send(req.prompt);
+  handle.send(req.prompt, req.attachments);
   return handle;
 }

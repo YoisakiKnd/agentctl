@@ -4,6 +4,7 @@ import type { Draft } from '../live';
 import { clockTime, formatTokens } from '../format';
 import Markdown from './Markdown';
 import Icon, { type IconName } from './Icon';
+import { SentAttachments, splitAttachments } from './Attachments';
 
 function firstLine(text: string, max = 140): string {
   const line = text.split('\n').find((l) => l.trim()) ?? '';
@@ -22,11 +23,13 @@ function toolIcon(name: string): IconName {
   return 'chevron';
 }
 
-function MediaChips({ item }: { item: Extract<Item, { kind: 'text' }> }) {
-  if (!item.media?.length) return null;
+/** hideImages：消息里已经有附件清单（图片会显示成缩略图），agent 记下的图片块就不重复列了 */
+function MediaChips({ item, hideImages }: { item: Extract<Item, { kind: 'text' }>; hideImages?: boolean }) {
+  const media = hideImages ? item.media?.filter((m) => m.kind !== 'image') : item.media;
+  if (!media?.length) return null;
   return (
     <div className="chips">
-      {item.media.map((m, i) => (
+      {media.map((m, i) => (
         <span className="pill" key={i}>
           {m.kind === 'image' ? '图片' : '附件'} {Math.max(1, Math.round(m.bytes / 1024))}KB
         </span>
@@ -301,15 +304,22 @@ function DiffBody({ patch }: { patch: string }) {
 
 function renderItem(item: Item, onDecide?: DecideFn) {
   switch (item.kind) {
-    case 'text':
-      return item.role === 'user' ? (
-        <div className="bubble">
-          <div className="msg">
-            <Markdown text={item.text} />
+    case 'text': {
+      if (item.role === 'user') {
+        const { text, paths } = splitAttachments(item.text);
+        return (
+          <div className="bubble">
+            {text ? (
+              <div className="msg">
+                <Markdown text={text} />
+              </div>
+            ) : null}
+            <SentAttachments paths={paths} />
+            <MediaChips item={item} hideImages={paths.length > 0} />
           </div>
-          <MediaChips item={item} />
-        </div>
-      ) : (
+        );
+      }
+      return (
         <>
           <div className="msg">
             <Markdown text={item.text} />
@@ -317,6 +327,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
           <MediaChips item={item} />
         </>
       );
+    }
 
     case 'thinking':
       return (
