@@ -11,6 +11,29 @@ import { AGENT_LABEL } from '../types';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'dsh', 'pi', 'cursor'];
 
+const SUB_KEY = 'agentctl.show-subagents';
+
+/** 子代理会话（Codex 的 Guardian 审查之类）默认不列出来，记住用户的选择 */
+function useShowSubagents() {
+  const [show, setShowState] = useState(() => {
+    try {
+      return localStorage.getItem(SUB_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setShow = (next: boolean) => {
+    setShowState(next);
+    try {
+      if (next) localStorage.setItem(SUB_KEY, '1');
+      else localStorage.removeItem(SUB_KEY);
+    } catch {
+      /* 存不了只影响下次默认值 */
+    }
+  };
+  return [show, setShow] as const;
+}
+
 interface Group {
   cwd: string;
   sessions: SessionSummary[];
@@ -73,28 +96,33 @@ export default function Dashboard() {
   const [agent, setAgent] = useState<AgentId | 'all'>('all');
   const [tag, setTag] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [showSub, setShowSub] = useShowSubagents();
+
+  const subCount = useMemo(() => (data?.sessions ?? []).filter((s) => s.subagent).length, [data]);
+  // 置顶了的子代理会话照常显示：那是用户自己挑出来的
+  const sessions = useMemo(() => (data?.sessions ?? []).filter((s) => showSub || !s.subagent || s.pinned), [data, showSub]);
 
   const counts = useMemo(() => {
     const out = new Map<string, number>();
-    for (const s of data?.sessions ?? []) out.set(s.agent, (out.get(s.agent) ?? 0) + 1);
+    for (const s of sessions) out.set(s.agent, (out.get(s.agent) ?? 0) + 1);
     return out;
-  }, [data]);
+  }, [sessions]);
 
   const tagCounts = useMemo(() => {
     const out = new Map<string, number>();
-    for (const s of data?.sessions ?? []) for (const t of s.tags ?? []) out.set(t, (out.get(t) ?? 0) + 1);
+    for (const s of sessions) for (const t of s.tags ?? []) out.set(t, (out.get(t) ?? 0) + 1);
     return [...out].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [data]);
+  }, [sessions]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return (data?.sessions ?? []).filter((s) => {
+    return sessions.filter((s) => {
       if (agent !== 'all' && s.agent !== agent) return false;
       if (tag && !s.tags?.includes(tag)) return false;
       if (!needle) return true;
       return `${s.title} ${s.cwd} ${s.preview ?? ''} ${(s.tags ?? []).join(' ')}`.toLowerCase().includes(needle);
     });
-  }, [data, agent, tag, query]);
+  }, [sessions, agent, tag, query]);
 
   // 置顶的单独列在最上面，不再在项目分组里重复出现
   const pinned = useMemo(() => filtered.filter((s) => s.pinned), [filtered]);
@@ -130,7 +158,7 @@ export default function Dashboard() {
           <h1 className="pagehead__title">会话</h1>
           {data ? (
             <p className="pagehead__sub num">
-              {data.sessions.length} 个会话 · {projectCount(data.sessions)} 个项目
+              {sessions.length} 个会话 · {projectCount(sessions)} 个项目
               {runningCount ? (
                 <>
                   {' · '}
@@ -177,7 +205,7 @@ export default function Dashboard() {
       <div className="filters">
         <div className="segmented" role="tablist" aria-label="按 agent 筛选">
           <button type="button" role="tab" aria-selected={agent === 'all'} className={agent === 'all' ? 'is-on' : ''} onClick={() => setAgent('all')}>
-            全部 <span className="num">{data?.sessions.length ?? 0}</span>
+            全部 <span className="num">{sessions.length}</span>
           </button>
           {AGENTS.filter((a) => (counts.get(a) ?? 0) > 0).map((a) => (
             <button
@@ -194,6 +222,17 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
+        {subCount ? (
+          <button
+            type="button"
+            className="pill pill--btn pill--quiet"
+            onClick={() => setShowSub(!showSub)}
+            aria-pressed={showSub}
+            title={showSub ? '隐藏由 agent 自动发起的子代理会话' : '显示由 agent 自动发起的子代理会话'}
+          >
+            {showSub ? '隐藏' : '显示'}子代理 <span className="num">{subCount}</span>
+          </button>
+        ) : null}
         {tagCounts.length ? (
           <div className="tagbar" aria-label="按标签筛选">
             {tagCounts.map(([t, n]) => (

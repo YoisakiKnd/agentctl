@@ -37,11 +37,11 @@ const NAV: { key: NavKey; label: string; icon: IconName; href: string }[] = [
   { key: 'settings', label: '设置', icon: 'sliders', href: '#/settings' },
 ];
 
-/** 侧栏默认内容：最近的会话，正在跑的带红点 */
+/** 侧栏默认内容：最近的会话，正在跑的带红点；子代理会话不占位置（正在看的那个除外） */
 export function RecentSessions({ currentId, limit = 40 }: { currentId?: string; limit?: number }) {
   const { data } = useSessions();
   const live = useLiveIds();
-  const sessions = (data?.sessions ?? []).slice(0, limit);
+  const sessions = (data?.sessions ?? []).filter((s) => !s.subagent || s.id === currentId).slice(0, limit);
   if (!sessions.length) return null;
   return (
     <div className="side__section">
