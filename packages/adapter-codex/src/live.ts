@@ -16,6 +16,7 @@ import {
   type ApprovalDecision,
   type ModelInfo,
   type PermissionMode,
+  type QuestionAnswers,
   type RunHandle,
   type RunRequest,
   type RunSink,
@@ -30,7 +31,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.9.0' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.10.0' };
 
 /**
  * 网页的权限模式 → Codex 自己的权限预设（与 TUI 里 /permissions 一致）：
@@ -59,6 +60,15 @@ interface Pending {
   event: UnifiedEvent;
   /** requestUserInput：问题文本 → 问题 id */
   questionIds?: Map<string, string>;
+  /** permissions/requestApproval：申请的权限，同意时原样授予 */
+  permissions?: Rec;
+}
+
+/** 申请里没要的项是 null，授权里要省掉 */
+function grantOf(requested: Rec | undefined): Rec {
+  const out: Rec = {};
+  for (const [k, v] of Object.entries(requested ?? {})) if (v !== null && v !== undefined) out[k] = v;
+  return out;
 }
 
 export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
@@ -83,6 +93,10 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
   let modeChanged = false;
   let model = req.model && req.model !== 'default' ? req.model : undefined;
   let effort = req.effort;
+  /** 线程实际用的模型（Plan 协作模式要求显式给出模型） */
+  let threadModel = '';
+  /** 上一轮用的协作模式：离开 Plan 时要显式切回 default */
+  let collab: 'plan' | 'default' = 'default';
   let turnId = '';
   let turnRunning = false;
   let ready = false;
@@ -118,15 +132,28 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
     sink({ type: 'event', event: { ...p.event, item: { ...p.event.item, state: approved ? 'approved' : 'denied' } } });
   };
 
+  /** 图片走 localImage（Codex 自己读文件、缩放）；所有附件的路径都列在文字末尾 */
+  const inputOf = (text: string, attachments?: Attachment[]) => {
+    const input: Rec[] = [{ type: 'text', text: withAttachmentList(text, attachments, isImageAttachment), text_elements: [] }];
+    for (const a of attachments ?? []) if (isImageAttachment(a)) input.push({ type: 'localImage', path: a.path });
+    return input;
+  };
+
   const startTurn = ({ text, attachments }: { text: string; attachments?: Attachment[] }) => {
     turnRunning = true;
     setState('running');
-    // 图片走 localImage（Codex 自己读文件、缩放）；所有附件的路径都列在文字末尾
-    const input: Rec[] = [{ type: 'text', text: withAttachmentList(text, attachments, isImageAttachment), text_elements: [] }];
-    for (const a of attachments ?? []) if (isImageAttachment(a)) input.push({ type: 'localImage', path: a.path });
-    const params: Rec = { threadId: sessionId, input };
+    const params: Rec = { threadId: sessionId, input: inputOf(text, attachments) };
     if (model) params.model = model;
     if (effort) params.effort = effort;
+    // 「只做规划」对应 Codex 的 Plan 协作模式：先调研、用 request_user_input 问清楚，再给出方案
+    const nextCollab = mode === 'plan' ? 'plan' : 'default';
+    if (nextCollab === 'plan' || collab === 'plan') {
+      params.collaborationMode = {
+        mode: nextCollab,
+        settings: { model: model ?? threadModel, reasoning_effort: effort ?? null, developer_instructions: null },
+      };
+      collab = nextCollab;
+    }
     if (modeChanged) {
       params.approvalPolicy = POLICY[mode].approval;
       params.sandboxPolicy = POLICY[mode].sandboxPolicy;
@@ -250,16 +277,20 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
     }
 
     if (method === 'item/tool/requestUserInput') {
-      // 复用网页上 AskUserQuestion 的问答卡：同样是 questions[{question, header, options}]
+      // 复用网页上 AskUserQuestion 的问答卡：同样是 questions[{question, header, options}]。
+      // isOther：除了选项还能自己写；没有选项的题只能自己写；isSecret：密码之类，输入时遮住
       const questionIds = new Map<string, string>();
       const questions = (Array.isArray(params.questions) ? params.questions : []).map((q) => {
         const r = (q ?? {}) as Rec;
         questionIds.set(String(r.question ?? ''), String(r.id ?? ''));
+        const options = Array.isArray(r.options) ? r.options : [];
         return {
           question: r.question,
           header: r.header,
           multiSelect: false,
-          options: Array.isArray(r.options) ? r.options : [],
+          options,
+          allowOther: r.isOther === true || !options.length,
+          secret: r.isSecret === true,
         };
       });
       const event = transient(
@@ -271,7 +302,34 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       return;
     }
 
-    // MCP elicitation、权限扩展等网页端还没有界面的请求：明确拒绝，免得 Codex 干等
+    if (method === 'item/permissions/requestApproval') {
+      // 申请沙箱外的额外权限（联网、读写工作区外的目录）
+      const perms = (params.permissions ?? {}) as { network?: { enabled?: boolean | null } | null; fileSystem?: { read?: string[] | null; write?: string[] | null } | null };
+      const read = perms.fileSystem?.read ?? [];
+      const write = perms.fileSystem?.write ?? [];
+      const what = [
+        perms.network?.enabled ? '联网' : '',
+        write.length ? `写入 ${write.join('、')}` : '',
+        read.length ? `读取 ${read.join('、')}` : '',
+      ].filter(Boolean);
+      const event = transient(
+        {
+          kind: 'approval',
+          requestId: key,
+          tool: 'permissions',
+          detail: reason || '申请额外权限',
+          input: { command: what.join('；') || '额外权限', cwd: params.cwd },
+          choices: ['allow', 'allow_session', 'deny'],
+          state: 'pending',
+        },
+        `approval:${key}`,
+      );
+      pending.set(key, { rpcId: id, method, event, permissions: params.permissions as Rec | undefined });
+      sink({ type: 'event', event });
+      return;
+    }
+
+    // MCP elicitation 等网页端还没有界面的请求：明确拒绝，免得 Codex 干等
     rpc.replyError(id, `agentctl 不支持 ${method}`);
   };
 
@@ -305,7 +363,17 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       if (!turnRunning) setState('running');
       drain();
     },
-    respond(requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) {
+    steer(text: string, attachments?: Attachment[]) {
+      if (exited) throw new Error('agent 进程已退出');
+      if (!ready || !turnRunning || !turnId) return handle.send(text, attachments);
+      // 这一轮可能恰好刚结束（no active turn），或者是不能插话的轮次（压缩上下文）：改成下一轮再发
+      rpc
+        .request('turn/steer', { threadId: sessionId, expectedTurnId: turnId, input: inputOf(text, attachments) })
+        .catch(() => {
+          if (!exited) handle.send(text, attachments);
+        });
+    },
+    respond(requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers) {
       const p = pending.get(requestId);
       if (!p) return false;
       if (p.method === 'item/tool/requestUserInput') {
@@ -314,10 +382,18 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
         } else {
           const out: Record<string, { answers: string[] }> = {};
           for (const [question, answer] of Object.entries(answers)) {
-            out[p.questionIds?.get(question) ?? question] = { answers: answer.split(', ').filter(Boolean) };
+            out[p.questionIds?.get(question) ?? question] = { answers: answer.filter(Boolean) };
           }
           rpc.reply(p.rpcId, { answers: out });
         }
+      } else if (p.method === 'item/permissions/requestApproval') {
+        // 同意就照单全给；拒绝是给一个空的授权
+        rpc.reply(
+          p.rpcId,
+          decision === 'deny'
+            ? { permissions: {}, scope: 'turn' }
+            : { permissions: grantOf(p.permissions), scope: decision === 'allow_session' ? 'session' : 'turn' },
+        );
       } else {
         rpc.reply(p.rpcId, { decision: decision === 'deny' ? 'decline' : decision === 'allow_session' ? 'acceptForSession' : 'accept' });
       }
@@ -360,7 +436,8 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
 
   void (async () => {
     try {
-      await rpc.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null });
+      // experimentalApi：turn/start 的 collaborationMode（Plan 模式）是实验字段
+      await rpc.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true, requestAttestation: false } });
       rpc.notify('initialized');
       const policy = POLICY[mode];
       const common: Rec = { cwd: req.cwd, approvalPolicy: policy.approval, sandbox: policy.sandbox, approvalsReviewer: policy.reviewer };
@@ -371,6 +448,7 @@ export function startCodexRun(req: RunRequest, sink: RunSink): RunHandle {
       const thread = (res.thread ?? {}) as Rec;
       sessionId = typeof thread.id === 'string' ? thread.id : sessionId;
       ctx.sessionId = sessionId;
+      threadModel = typeof res.model === 'string' ? res.model : '';
       resolveSid(sessionId);
       sink({ type: 'config', model: typeof res.model === 'string' ? res.model : model, permissionMode: mode });
       sink({ type: 'state', state, sessionId });

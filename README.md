@@ -7,7 +7,7 @@
 
 ## 现在能做什么
 
-- **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
+- **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、回答 agent 的提问、运行中排队或引导、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
 - **粘贴图片、附文件**：截图直接 Ctrl+V，文件可以拖进输入框或点回形针选。Claude、Codex 收到的是原生图片（模型直接看图）；其他文件、以及不支持图片的 DSH，在消息末尾附上本地路径，agent 用读文件的工具自己去读。时间线里显示缩略图和文件名。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
@@ -129,6 +129,11 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - 实时事件与磁盘回放同构，按行 `uuid` 去重：刷新页面、换设备打开都能接上同一个运行，不重不漏。
 - 权限模式：逐个审批 / 自动接受编辑 / Auto 模式 / 只做规划 / 跳过所有权限（需二次确认）；进程运行中可以直接切换。进程总是带 `--allow-dangerously-skip-permissions` 启动——它只是"允许之后切到 bypass"，默认行为不变；`allowBypassPermissions: false` 时不带。
 - `AskUserQuestion` 在网页里是一张问答表单（单选 / 多选 / 自填）。
+- **运行中继续发消息**：
+  - **引导**（默认，Enter）：插进正在进行的这一轮，agent 做完当前这一步就会看到。Claude 是 CLI 自己的行为（磁盘上记成 `queued_command`，回放照常显示）；Codex 走 `turn/steer`。这时还有没处理的审批 / 提问，会先拒绝掉再交出消息，相当于终端里「不批准，告诉它该怎么做」。
+  - **排队**（Tab，或点「排队」）：等这一轮结束再依次发出。队列在 server 上，输入框上方列出来，每条可以改成引导、撤回到输入框里改、删掉；刷新页面、换设备都还在。
+  - **打断**：停掉这一轮，进程保留；排队的消息不再发出，放回点「打断」的那个输入框。
+  - DSH 的 ACP 没有插话的接口，只能排队。
 - **终端（Shell 模式）**：会话页右上角「终端」打开真正的 `claude --resume <会话>`（斜杠命令、/model 菜单等 TUI 功能都在），也可以切到普通 shell。终端进程在服务端常驻，刷新、手机切后台后自动重连并回放；手机上有 Esc / Tab / ^C / 方向键条。同一会话的终端和输入框进程互斥。
 - 已知限制：打断时已生成的半段文字不保留。
 
@@ -137,7 +142,9 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - **回放**：rollout 有两代格式，逐行看有没有 `ordinal` 区分。新版取 `item_completed`（真实执行的命令、带统一 diff 的文件改动、网页搜索），旧版取 `response_item` + `event_msg`。标题来自 `session_index.jsonl`，Guardian 审查这类子代理会话在列表里标成「子代理」。
 - **轮次**：Codex 的行上没有轮号，只有每轮一条 `task_started`；按字节偏移建索引并增量更新，任意窗口都能定位轮次。
 - **实时**：一个会话一个 `codex app-server` 进程，`thread/start` / `thread/resume` + 每条消息一个 `turn/start`。实时 item 归一成文件格式后走同一个解析器，uid 与磁盘一致。
-- **权限模式**映射为 Codex 的审批策略 + 沙箱：逐个审批 = untrusted + workspace-write，Auto = on-request + workspace-write，只读 = on-request + read-only，跳过所有权限 = never + danger-full-access；运行中切换从下一轮生效。
+- **权限模式**映射为 Codex 的审批策略 + 沙箱：逐个审批 = on-request + workspace-write，Auto = 同上但审批交给审核子代理，只读规划 = on-request + read-only + Plan 协作模式，跳过所有权限 = never + danger-full-access；运行中切换从下一轮生效。
+- **提问**：Codex 只在 Plan 协作模式下提供 `request_user_input`，所以「只读规划」会在 `turn/start` 里带上 `collaborationMode: plan`（实验接口，initialize 时声明 `experimentalApi`）。问题渲染成和 Claude 一样的问答卡，题目不让自填时不显示输入框，`isSecret` 的题输入时遮住；最终方案（`Plan` item）显示成一条「方案」消息。
+- **额外权限**：Codex 申请沙箱外的权限（联网、读写工作区外的目录）也是一张审批卡；允许 = 本轮授予，本会话内都允许 = 整个会话授予。
 
 ## DSH 怎么接的
 
@@ -145,6 +152,7 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - **内存**：全部会话解压后约 150MB，所以列表摘要只保留增量状态、不留原文；打开的会话进 128MB 的 LRU。
 - **回放**：每条记录自带绝对轮号和单调 `seq`（直接当 uid）；`user/message` 只有 `source.kind = user` 才是人说的话，其余注入上下文（记忆、任务提醒、运行时快照……）不上时间线，后台任务结果、子代理来信等渲染成提示。
 - **实时**：`--profile sdk` 只能新建会话、没有取消，所以走 `--profile acp`（`session/new`、`session/resume`、`session/cancel`、`session/set_config_option`）。ACP 推送的不是会话文件里的记录，只用来做草稿、审批和状态；时间线全部来自文件增量追尾（运行中每秒一次），实时与回放天然一致。
+- DSH 的提问工具（`ask_user_question`）在 ACP 下没有提供，模型会直接在回复里问，照常回复就行。
 - 模型列表由 ACP 在建立会话后给出（不同于 web 配置里的自定义 provider，acp 配置用的是 deepseek-official）；DSH 的 ACP 没有暴露权限模式，网页上不提供切换。
 
 ## 隐私边界
@@ -193,7 +201,7 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | POST | `/api/runs/:id/model` | 运行中切换模型 `{model}` |
 | POST | `/api/runs/:id/permission-mode` | 运行中切换权限模式 `{mode}` |
 | POST | `/api/runs/:id/effort` | 运行中切换推理强度 `{effort}`（DSH） |
-| POST | `/api/sessions/:id/send` | 往会话发消息 `{text, attachments?}`（附件是上传返回的 id，最多 20 个；有附件时文字可以为空）：有活进程就写 stdin，否则 `--resume` 起一个；没带的运行选项沿用会话上次的 |
+| POST | `/api/sessions/:id/send` | 往会话发消息 `{text, attachments?, mode?}`（附件是上传返回的 id，最多 20 个；有附件时文字可以为空）：进程空闲就直接发；正忙时 `mode: "queue"`（默认）排队、`"steer"` 插进这一轮；没有进程就 `--resume` 起一个，没带的运行选项沿用会话上次的 |
 | POST | `/api/uploads?name=&type=` | 上传附件：请求体是文件字节（`application/octet-stream`），单个上限 50MB；返回 `{id, name, mime, bytes, path}` |
 | GET | `/api/uploads/:id/:name` | 取回附件。只有认得的位图（png / jpeg / gif / webp）内联显示，其余一律下载 |
 | POST | `/api/runs` | 新建会话 `{cwd, prompt, attachments?, model?, permissionMode?, createDir?}`，等 agent 分配 id 后返回；目录不存在时返回 409，带 `createDir: true` 重发才新建 |
@@ -203,15 +211,16 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/runs` | 运行中的进程 |
 | WS | `/api/sessions/:id/shell?kind=agent\|shell` | 终端：`{type:input\|resize\|kill}` 上行，`{type:ready\|output\|exit\|error\|ping}` 下行；接上时先发屏幕快照 |
 | GET | `/api/runs/:id/stream` | SSE：先回放该运行的全部事件，再推实时 |
-| POST | `/api/runs/:id/approve` · `/interrupt` · `/stop` | 审批 `{requestId, decision, answers?}` / 打断本轮 / 结束进程 |
+| POST | `/api/runs/:id/approve` · `/interrupt` · `/stop` | 审批 `{requestId, decision, answers?}`（`answers`：`{问题: [答案…]}`）/ 打断本轮（返回被撤下的排队消息 `queued`）/ 结束进程 |
+| DELETE · POST | `/api/runs/:id/queue/:qid` · `/queue/:qid/steer` | 撤回一条排队的消息（返回它的内容）/ 把它改成引导 |
 
 ## 适配器进度
 
 | Agent | 只读回放 | 实时运行 |
 |---|---|---|
-| Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 打断 + Shell 模式 |
-| Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答、打断、运行中切模型 / 权限 + Shell 模式 |
-| DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、打断、运行中切模型与推理强度、三档权限预设（网页终端只提供普通 shell；Agent 预设 ACP 不支持） |
+| Claude Code | ✅ 已接入（`~/.claude/projects/*.jsonl`） | ✅ stream-json + 审批桥 + 问答 + 排队 / 引导 / 打断 + Shell 模式 |
+| Codex | ✅ 已接入（`~/.codex/sessions/**/rollout-*.jsonl`，新旧两代格式） | ✅ `codex app-server` JSON-RPC：审批、问答（Plan 模式）、额外权限、排队 / 引导 / 打断、运行中切模型 / 权限 + Shell 模式 |
+| DSH | ✅ 已接入（`~/.dsh/sessions/**/session.v4.jsonl.zstd`，增量解压） | ✅ `dsh --profile acp`：新建 / 续接、排队、打断、运行中切模型与推理强度、三档权限预设（网页终端只提供普通 shell；Agent 预设 ACP 不支持） |
 | Pi | ✅ 已接入（`~/.pi/agent/sessions`，会话树取当前分支，含花费） | 本机未装 `pi` 命令行，只读 |
 | Cursor | 本机未安装、无会话数据 | — |
 

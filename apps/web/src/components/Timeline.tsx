@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import type { ApprovalDecision, Item, UnifiedEvent } from '../types';
+import type { ApprovalDecision, Item, QuestionAnswers, UnifiedEvent } from '../types';
 import type { Draft } from '../live';
 import { clockTime, formatTokens } from '../format';
 import Markdown from './Markdown';
@@ -76,7 +76,7 @@ function UsageLine({ u }: { u: TurnUsage }) {
 export type DecideFn = (
   requestId: string,
   decision: ApprovalDecision,
-  answers?: Record<string, string>,
+  answers?: QuestionAnswers,
 ) => Promise<void>;
 
 interface Question {
@@ -84,6 +84,10 @@ interface Question {
   header?: string;
   options: { label: string; description?: string }[];
   multiSelect?: boolean;
+  /** 能不能不选选项、自己写（Claude 的提问总能；Codex 由题目决定，没有选项的题只能自己写） */
+  allowOther: boolean;
+  /** 密码之类：输入时遮住 */
+  secret?: boolean;
 }
 
 function questionsOf(input: unknown): Question[] {
@@ -91,14 +95,19 @@ function questionsOf(input: unknown): Question[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((q): q is Record<string, unknown> => !!q && typeof q === 'object' && typeof q.question === 'string')
-    .map((q) => ({
-      question: q.question as string,
-      header: typeof q.header === 'string' ? q.header : undefined,
-      multiSelect: q.multiSelect === true,
-      options: (Array.isArray(q.options) ? q.options : [])
+    .map((q) => {
+      const options = (Array.isArray(q.options) ? q.options : [])
         .filter((o): o is Record<string, unknown> => !!o && typeof o === 'object' && typeof o.label === 'string')
-        .map((o) => ({ label: o.label as string, description: typeof o.description === 'string' ? o.description : undefined })),
-    }));
+        .map((o) => ({ label: o.label as string, description: typeof o.description === 'string' ? o.description : undefined }));
+      return {
+        question: q.question as string,
+        header: typeof q.header === 'string' ? q.header : undefined,
+        multiSelect: q.multiSelect === true,
+        options,
+        allowOther: q.allowOther !== false || !options.length,
+        secret: q.secret === true,
+      };
+    });
 }
 
 /** AskUserQuestion：agent 在等你回答问题。每题可选给定选项，也可以自己写 */
@@ -118,11 +127,11 @@ function QuestionForm({
 
   const answerOf = (q: Question) => {
     const chosen = [...(picked[q.question] ?? [])];
-    const free = other[q.question]?.trim();
+    const free = q.allowOther ? other[q.question]?.trim() : '';
     if (free) chosen.push(free);
-    return chosen.join(', ');
+    return chosen;
   };
-  const complete = questions.every((q) => answerOf(q));
+  const complete = questions.every((q) => answerOf(q).length > 0);
 
   const toggle = (q: Question, label: string) =>
     setPicked((cur) => {
@@ -175,17 +184,21 @@ function QuestionForm({
               </label>
             );
           })}
-          <input
-            className="input question__other"
-            placeholder={q.multiSelect ? '补充其他答案（可选）' : '或者自己写'}
-            value={other[q.question] ?? ''}
-            onChange={(e) => {
-              const v = e.target.value;
-              setOther((cur) => ({ ...cur, [q.question]: v }));
-              // 单选题自己写了答案就取消已选项，避免两个答案混在一起
-              if (!q.multiSelect && v.trim()) setPicked((cur) => ({ ...cur, [q.question]: [] }));
-            }}
-          />
+          {q.allowOther ? (
+            <input
+              className="input question__other"
+              type={q.secret ? 'password' : 'text'}
+              autoComplete={q.secret ? 'off' : undefined}
+              placeholder={!q.options.length ? '写下你的回答' : q.multiSelect ? '补充其他答案（可选）' : '或者自己写'}
+              value={other[q.question] ?? ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                setOther((cur) => ({ ...cur, [q.question]: v }));
+                // 单选题自己写了答案就取消已选项，避免两个答案混在一起
+                if (!q.multiSelect && v.trim()) setPicked((cur) => ({ ...cur, [q.question]: [] }));
+              }}
+            />
+          ) : null}
         </fieldset>
       ))}
       {pending && onDecide ? (

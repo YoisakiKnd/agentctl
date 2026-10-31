@@ -28,7 +28,7 @@ const handle = adapter.run(
       deltas += 1;
       return;
     }
-    if (msg.type === 'delta_reset' || msg.type === 'config') return;
+    if (msg.type === 'delta_reset' || msg.type === 'config' || msg.type === 'queue') return;
     if (msg.type === 'state') {
       console.log(`[state] ${msg.state}${msg.sessionId ? ` sid=${msg.sessionId}` : ''}${msg.error ? ` err=${msg.error}` : ''}`);
       if (msg.state === 'idle') {

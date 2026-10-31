@@ -67,9 +67,28 @@ export function useAttachments() {
     if (added.length) setItems((list) => [...list, ...added]);
   }, []);
 
+  /** 撤回排队的消息时，把它已上传好的附件放回来（不用重新上传） */
+  const restore = useCallback((list: { uploadId?: string; name: string; mime: string; bytes: number }[]) => {
+    const added: PendingAttachment[] = list.flatMap((a) =>
+      a.uploadId
+        ? [
+            {
+              key: `a${++seq}`,
+              name: a.name,
+              bytes: a.bytes,
+              preview: /^image\/(png|jpeg|gif|webp)$/.test(a.mime) ? `/api/uploads/${a.uploadId}/${encodeURIComponent(a.name)}` : undefined,
+              status: 'done' as const,
+              upload: { id: a.uploadId, name: a.name, mime: a.mime, bytes: a.bytes, path: '' },
+            },
+          ]
+        : [],
+    );
+    if (added.length) setItems((cur) => [...cur, ...added].slice(0, MAX_COUNT));
+  }, []);
+
   const drop = (a: PendingAttachment) => {
     ctrls.current.get(a.key)?.abort();
-    if (a.preview) {
+    if (a.preview && previews.current.has(a.preview)) {
       URL.revokeObjectURL(a.preview);
       previews.current.delete(a.preview);
     }
@@ -102,6 +121,7 @@ export function useAttachments() {
   return {
     items,
     add,
+    restore,
     remove,
     clear,
     ids: items.flatMap((a) => (a.upload ? [a.upload.id] : [])),

@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { access, constants, mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { oneLine, searchQuery, type ApprovalDecision, type Attachment, type EventWindow, type PermissionMode, type SearchHit, type SessionSummary } from '@agentctl/core';
+import { oneLine, searchQuery, type ApprovalDecision, type Attachment, type EventWindow, type PermissionMode, type QuestionAnswers, type SearchHit, type SessionSummary } from '@agentctl/core';
 import {
   COOKIE_NAME,
   SESSION_TTL_MS,
@@ -14,7 +14,7 @@ import {
 import { expandHome, isPathAllowed, type Config } from './config.ts';
 import type { Registry } from './registry.ts';
 import type { RunPrefs } from './db.ts';
-import type { RunInfo, RunManager } from './runs.ts';
+import type { RunInfo, RunManager, SendMode } from './runs.ts';
 import type { ShellKind, ShellManager } from './shells.ts';
 import { usageReport } from './usage.ts';
 import type { QuotaService } from './quota.ts';
@@ -72,16 +72,25 @@ function modeOf(value: unknown, cfg: Config): PermissionMode {
   return value as PermissionMode;
 }
 
-/** AskUserQuestion 的回答：{ 问题: 答案 }，只收字符串 */
-function answersOf(value: unknown): Record<string, string> | undefined {
+/** 提问的回答：{ 问题: [答案…] }；单个字符串也收（当作一个答案） */
+function answersOf(value: unknown): QuestionAnswers | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequest('answers 必须是对象');
-  const out: Record<string, string> = {};
+  const out: QuestionAnswers = {};
   for (const [k, v] of Object.entries(value)) {
-    if (typeof v !== 'string' || k.length > 2000 || v.length > 10_000) throw new BadRequest('answers 格式不合法');
-    out[k] = v;
+    const list = typeof v === 'string' ? [v] : v;
+    if (!Array.isArray(list) || k.length > 2000 || list.length > 50 || list.some((a) => typeof a !== 'string' || a.length > 10_000)) {
+      throw new BadRequest('answers 格式不合法');
+    }
+    out[k] = list as string[];
   }
   return out;
+}
+
+function sendModeOf(value: unknown): SendMode {
+  if (value === undefined || value === 'queue') return 'queue';
+  if (value === 'steer') return 'steer';
+  throw new BadRequest('mode 只能是 queue 或 steer');
 }
 
 const SHELL_HEARTBEAT_MS = 20_000;
@@ -891,14 +900,15 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
   // 往已有会话发消息：有活着的进程就直接写 stdin，否则 --resume 起一个
   app.post('/api/sessions/:id/send', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as RunBody & { text?: unknown; attachments?: unknown };
+    const body = (req.body ?? {}) as RunBody & { text?: unknown; attachments?: unknown; mode?: unknown };
+    const mode = sendModeOf(body.mode);
     const { text, attachments } = await messageOf(body.text, body.attachments);
     if (shells.get(`${id}:agent`)) {
       return reply.code(409).send({ error: '这个会话正在网页终端里运行 claude，先在终端里退出（/exit）再在这里发消息' });
     }
     const active = runs.forSession(id);
     if (active && active.state !== 'exited') {
-      active.handle.send(text, attachments);
+      active.send(text, attachments, mode);
       return { run: active.info() };
     }
 
@@ -978,7 +988,28 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
   app.post('/api/runs/:id/interrupt', async (req, reply) => {
     const run = runs.get((req.params as { id: string }).id);
     if (!run || run.state === 'exited') return reply.code(404).send({ error: '运行不存在或已结束' });
+    // 排队的消息不再自动发出，交还给点「打断」的那个页面放回输入框
+    const queued = run.takeQueue();
     run.handle.interrupt();
+    return { ok: true, queued };
+  });
+
+  app.delete('/api/runs/:id/queue/:qid', async (req, reply) => {
+    const { id, qid } = req.params as { id: string; qid: string };
+    const item = runs.get(id)?.unqueue(qid);
+    if (!item) return reply.code(404).send({ error: '这条消息已经发出或被撤回了' });
+    return { item };
+  });
+
+  app.post('/api/runs/:id/queue/:qid/steer', async (req, reply) => {
+    const { id, qid } = req.params as { id: string; qid: string };
+    const run = runs.get(id);
+    if (!run || run.state === 'exited') return reply.code(404).send({ error: '运行不存在或已结束' });
+    try {
+      if (!run.steerQueued(qid)) return reply.code(404).send({ error: '这条消息已经发出或被撤回了' });
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
     return { ok: true };
   });
 

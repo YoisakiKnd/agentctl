@@ -186,6 +186,12 @@ export function parseLine(line: Rec, offset: number, ctx: ParseCtx): UnifiedEven
         if (text) push({ kind: 'text', role: 'assistant', text }, id);
         break;
       }
+      case 'Plan': {
+        // Plan 协作模式的最终方案（模型输出里的 <proposed_plan>）；它不会再另有一条 AgentMessage
+        const text = str(item.text)?.trim();
+        if (text) push({ kind: 'text', role: 'assistant', text: `**方案**\n\n${text}` }, id);
+        break;
+      }
       case 'Reasoning': {
         const parts = Array.isArray(item.summary_text) ? item.summary_text.filter((t): t is string => typeof t === 'string') : [];
         const text = parts.join('\n\n').trim();
@@ -359,6 +365,8 @@ export function normalizeLiveItem(item: Rec): Rec | null {
       return { type: 'AgentMessage', id, content: [{ type: 'Text', text: str(item.text) ?? '' }], phase: item.phase };
     case 'reasoning':
       return { type: 'Reasoning', id, summary_text: Array.isArray(item.summary) ? item.summary : [] };
+    case 'plan':
+      return { type: 'Plan', id, text: item.text };
     case 'commandExecution':
       return {
         type: 'CommandExecution',

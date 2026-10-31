@@ -10,7 +10,7 @@ import Timeline from '../components/Timeline';
 import { formatBytes, formatCost, homeShorten, timeAgo } from '../format';
 import { mergeEvents, useLiveRun } from '../live';
 import { navigate, sessionHref, shellHref } from '../router';
-import type { ApprovalDecision, PermissionMode, RunPrefs, RunState, SessionSummary, UnifiedEvent } from '../types';
+import type { ApprovalDecision, PermissionMode, QuestionAnswers, RunPrefs, RunState, SendMode, SessionSummary, UnifiedEvent } from '../types';
 import { AGENT_LABEL } from '../types';
 import type { RunOptions } from '../api';
 
@@ -308,8 +308,8 @@ export default function Session({ id, at }: { id: string; at?: number }) {
   }, [toBottom]);
 
   const send = useCallback(
-    async (text: string, opts: RunOptions, attachments: string[]) => {
-      const { run } = await api.send(id, text, processAlive ? {} : opts, attachments);
+    async (text: string, opts: RunOptions, attachments: string[], mode: SendMode) => {
+      const { run } = await api.send(id, text, processAlive ? {} : opts, attachments, mode);
       // 从搜索结果跳进来的：发了消息就回到正常的"跟随最新"视图
       if (at !== undefined) {
         navigate(sessionHref(id).slice(1));
@@ -333,7 +333,7 @@ export default function Session({ id, at }: { id: string; at?: number }) {
   );
 
   const decide = useCallback(
-    async (requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) => {
+    async (requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers) => {
       if (!runId) throw new Error('没有正在进行的运行');
       await api.approve(runId, requestId, decision, answers);
     },
@@ -500,7 +500,11 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             pending={pending}
             processAlive={processAlive}
             onSend={send}
-            onInterrupt={runId ? () => api.interrupt(runId).then(() => undefined) : undefined}
+            onInterrupt={runId ? () => api.interrupt(runId).then((r) => r.queued) : undefined}
+            queue={live.queue}
+            canSteer={live.canSteer}
+            onUnqueue={runId ? (qid) => api.unqueue(runId, qid).then((r) => r.item) : undefined}
+            onSteerQueued={runId ? (qid) => api.steerQueued(runId, qid).then(() => undefined) : undefined}
             onStop={runId ? () => api.stop(runId).then(() => undefined) : undefined}
             runModel={live.model ?? runModel}
             runModels={live.models}

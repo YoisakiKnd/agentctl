@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import type { LiveMessage, ModelInfo, PermissionMode, RunState, UnifiedEvent } from './types';
+import type { LiveMessage, ModelInfo, PermissionMode, QueuedMessage, RunState, UnifiedEvent } from './types';
 
 export interface Draft {
   block: 'text' | 'thinking';
@@ -21,9 +21,24 @@ export interface LiveView {
   models: ModelInfo[] | null;
   /** 进程当前的推理强度（DSH 会报） */
   effort: string | null;
+  /** 排队等着发的消息 */
+  queue: QueuedMessage[];
+  /** 这个 agent 能不能把消息插进正在进行的这一轮 */
+  canSteer: boolean;
 }
 
-const IDLE: LiveView = { events: [], draft: null, state: null, error: '', permissionMode: null, model: null, models: null, effort: null };
+const IDLE: LiveView = {
+  events: [],
+  draft: null,
+  state: null,
+  error: '',
+  permissionMode: null,
+  model: null,
+  models: null,
+  effort: null,
+  queue: [],
+  canSteer: false,
+};
 
 /**
  * 订阅一次运行的事件流（SSE）。服务端先回放该运行的全部事件再接实时，
@@ -45,12 +60,14 @@ export function useLiveRun(runId: string | null): LiveView {
     let model: string | null = null;
     let models: ModelInfo[] | null = null;
     let effort: string | null = null;
+    let queue: QueuedMessage[] = [];
+    let canSteer = false;
     let frame = 0;
 
     // 流式增量一秒几十条，合并到下一帧再渲染
     const flush = () => {
       frame = 0;
-      setView({ events: order.map((u) => byUid.get(u)!), draft, state, error, permissionMode, model, models, effort });
+      setView({ events: order.map((u) => byUid.get(u)!), draft, state, error, permissionMode, model, models, effort, queue, canSteer });
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(flush);
@@ -85,6 +102,10 @@ export function useLiveRun(runId: string | null): LiveView {
           if (msg.model) model = msg.model;
           if (msg.models?.length) models = msg.models;
           if (msg.effort !== undefined) effort = msg.effort;
+          break;
+        case 'queue':
+          queue = msg.items;
+          canSteer = msg.steer;
           break;
         case 'state':
           state = msg.state;

@@ -19,7 +19,7 @@ const log = (s: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1)}
 
 const handle = adapter.run!({ cwd, prompt: 'Use bash to run: echo dsh-live > d.txt . Then reply with just DONE.' }, (msg: LiveMessage) => {
   if (msg.type === 'delta') return void (deltas += 1);
-  if (msg.type === 'delta_reset') return;
+  if (msg.type === 'delta_reset' || msg.type === 'queue') return;
   if (msg.type === 'config') return log(`[config] model=${msg.model ?? '-'} models=${msg.models?.map((m) => m.displayName).join(', ') ?? '-'}`);
   if (msg.type === 'state') {
     log(`[state] ${msg.state}${msg.error ? ` err=${msg.error}` : ''}`);

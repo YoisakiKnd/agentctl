@@ -141,17 +141,39 @@ export type LiveMessage =
       effort?: string;
       /** 进程自己报的可选模型（DSH 的 ACP 只在建立会话后才给），网页用它替换静态列表 */
       models?: ModelInfo[];
-    };
+    }
+  /** 排队等当前这一轮结束再发的消息（整表推送）；steer：能不能把消息插进正在进行的这一轮 */
+  | { type: 'queue'; items: QueuedMessage[]; steer: boolean };
+
+/** 排队中的一条消息 */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  /** uploadId：网页附件的 id，撤回编辑时用它把附件放回输入框 */
+  attachments: { name: string; mime: string; bytes: number; uploadId?: string }[];
+  at: string;
+}
+
+/**
+ * 问题的回答：`{ 问题原文: 选中的选项 / 自己写的答案 }`。
+ * 每题一个数组（多选、选项加补充），各家适配器再转成自己要的格式。
+ */
+export type QuestionAnswers = Record<string, string[]>;
 
 export type RunSink = (msg: LiveMessage) => void;
 
 export interface RunHandle {
   /** 首次拿到 agent 分配的 sessionId 时 resolve；进程先退出则 reject */
   sessionId: Promise<string>;
-  /** 追加一条用户消息（进程会排队，不必等上一轮结束） */
+  /** 发一条用户消息开始新的一轮。server 只在进程空闲时调用（排队由 server 管） */
   send(text: string, attachments?: Attachment[]): void;
-  /** answers：AskUserQuestion 的回答，`{ 问题原文: 选中的选项（多选用 ", " 连接） }` */
-  respond(requestId: string, decision: ApprovalDecision, answers?: Record<string, string>): boolean;
+  /**
+   * 引导：把消息插进正在进行的这一轮，agent 在当前这一步结束后就能看到。
+   * 没有正在进行的轮次时等同于 send。不支持的 agent（DSH 的 ACP）不提供这个方法。
+   */
+  steer?(text: string, attachments?: Attachment[]): void;
+  /** answers：提问的回答 */
+  respond(requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers): boolean;
   /** 运行中切换权限模式；resolve 为实际生效的模式 */
   setPermissionMode?(mode: PermissionMode): Promise<PermissionMode>;
   /** 运行中切换模型（下一次请求起生效）；resolve 为实际生效的模型 id */

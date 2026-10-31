@@ -7,6 +7,9 @@ import type {
   ModelInfo,
   SearchResult,
   PermissionMode,
+  QuestionAnswers,
+  QueuedMessage,
+  SendMode,
   RunInfo,
   SessionSummary,
   Stats,
@@ -158,11 +161,17 @@ export const api = {
     request<{ path: string; exists: boolean; creatable: boolean; error?: string }>(`/api/fs/check?${new URLSearchParams({ path })}`, { signal }),
   startRun: (body: { agent?: AgentId; cwd: string; prompt: string; createDir?: boolean; attachments?: string[] } & RunOptions) =>
     request<{ run: RunInfo }>('/api/runs', { method: 'POST', body: JSON.stringify(body) }),
-  send: (sessionId: string, text: string, opts: RunOptions = {}, attachments: string[] = []) =>
+  send: (sessionId: string, text: string, opts: RunOptions = {}, attachments: string[] = [], mode: SendMode = 'queue') =>
     request<{ run: RunInfo }>(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: 'POST',
-      body: JSON.stringify({ text, ...opts, ...(attachments.length ? { attachments } : {}) }),
+      body: JSON.stringify({ text, ...opts, ...(attachments.length ? { attachments } : {}), mode }),
     }),
+  /** 撤回排队中的一条，拿回内容放回输入框 */
+  unqueue: (runId: string, queuedId: string) =>
+    request<{ item: QueuedMessage }>(`/api/runs/${runId}/queue/${queuedId}`, { method: 'DELETE' }),
+  /** 排队中的一条改成引导：马上插进正在进行的这一轮 */
+  steerQueued: (runId: string, queuedId: string) =>
+    request<{ ok: boolean }>(`/api/runs/${runId}/queue/${queuedId}/steer`, { method: 'POST' }),
   /** 请求体就是文件字节；一律按 octet-stream 发，免得 .json 之类被服务端当成 JSON 解析 */
   upload: (file: File, signal?: AbortSignal) =>
     request<UploadInfo>(`/api/uploads?${new URLSearchParams({ name: file.name, type: file.type })}`, {
@@ -171,7 +180,7 @@ export const api = {
       headers: { 'content-type': 'application/octet-stream' },
       signal,
     }),
-  approve: (runId: string, requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) =>
+  approve: (runId: string, requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers) =>
     request<{ ok: boolean }>(`/api/runs/${runId}/approve`, {
       method: 'POST',
       body: JSON.stringify({ requestId, decision, answers }),
@@ -187,8 +196,9 @@ export const api = {
     request<{ ok: boolean; version: string; authRequired: boolean; remote: boolean; allowBypass?: boolean }>(
       '/api/health',
     ),
+  /** 打断这一轮；排队的消息不再发出，原样交还（放回输入框） */
   interrupt: (runId: string) =>
-    request<{ ok: boolean }>(`/api/runs/${runId}/interrupt`, { method: 'POST' }),
+    request<{ ok: boolean; queued?: QueuedMessage[] }>(`/api/runs/${runId}/interrupt`, { method: 'POST' }),
   stop: (runId: string) => request<{ ok: boolean }>(`/api/runs/${runId}/stop`, { method: 'POST' }),
   streamUrl: (runId: string) => `/api/runs/${runId}/stream`,
 };

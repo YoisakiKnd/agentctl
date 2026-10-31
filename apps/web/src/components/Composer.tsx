@@ -5,7 +5,7 @@ import { useAllowBypass } from '../caps';
 import { EFFORT_LABEL, isAlias, modelLabel, useModels } from '../models';
 import Icon from './Icon';
 import { AttachButton, AttachmentTray, onPasteFiles, useAttachments, useDropZone } from './Attachments';
-import type { AgentId, ModelInfo, PermissionMode, RunState } from '../types';
+import type { AgentId, ModelInfo, PermissionMode, QueuedMessage, RunState, SendMode } from '../types';
 
 interface ModeOption {
   value: PermissionMode;
@@ -47,7 +47,7 @@ const DSH_MODES: ModeOption[] = [
 const CODEX_MODES: ModeOption[] = [
   { value: 'default', label: '默认', hint: 'Codex 的 Default：工作区内读写、跑命令；访问工作区外或联网时由你审批' },
   { value: 'auto', label: 'Auto-review', hint: '同默认，但审批交给 Codex 的审核子代理按风险判断，不来问你' },
-  { value: 'plan', label: '只读', hint: 'Codex 的 Read Only：只能看；改文件、联网时由你审批' },
+  { value: 'plan', label: '只读规划', hint: 'Codex 的 Plan 模式 + Read Only：先调研、有疑问会弹选项问你，最后给出方案；改文件、联网时由你审批' },
   { value: 'bypassPermissions', label: '完全访问', hint: 'Codex 的 Full Access：不加沙箱、不审批，可以改工作区外的文件、联网' },
 ]
 
@@ -225,6 +225,55 @@ export function isSubmitKey(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
   return !coarse && !e.shiftKey;
 }
 
+/** 排队中的消息：这一轮结束后依次发出；可以改成引导、撤回编辑或删掉 */
+function QueueList({
+  items,
+  canSteer,
+  onSteer,
+  onEdit,
+  onRemove,
+}: {
+  items: QueuedMessage[];
+  canSteer: boolean;
+  onSteer?: (id: string) => void;
+  onEdit?: (id: string) => void;
+  onRemove?: (id: string) => void;
+}) {
+  return (
+    <div className="cqueue" aria-label="排队中的消息">
+      <div className="cqueue__head">排队中 · 这一轮结束后依次发出</div>
+      {items.map((q) => (
+        <div className="cqueue__item" key={q.id}>
+          <span className="cqueue__text" title={q.text}>
+            {q.text || <span className="is-faint">{q.attachments.map((a) => a.name).join('、')}</span>}
+          </span>
+          {q.attachments.length && q.text ? (
+            <span className="cqueue__meta" title={q.attachments.map((a) => a.name).join('\n')}>
+              <Icon name="clip" size={12} />
+              {q.attachments.length}
+            </span>
+          ) : null}
+          {canSteer && onSteer ? (
+            <button type="button" className="linkbtn" onClick={() => onSteer(q.id)} title="现在就插进正在进行的这一轮">
+              引导
+            </button>
+          ) : null}
+          {onEdit ? (
+            <button type="button" className="linkbtn" onClick={() => onEdit(q.id)} title="撤回到输入框里改">
+              编辑
+            </button>
+          ) : null}
+          {onRemove ? (
+            <button type="button" className="iconbtn cqueue__remove" onClick={() => onRemove(q.id)} aria-label="删掉这条">
+              <Icon name="x" size={12} />
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Composer({
   agent,
   path,
@@ -234,6 +283,10 @@ export default function Composer({
   onSend,
   onInterrupt,
   onStop,
+  queue = [],
+  canSteer = false,
+  onUnqueue,
+  onSteerQueued,
   runModel,
   onSetModel,
   runPermissionMode,
@@ -252,9 +305,17 @@ export default function Composer({
   state: RunState | null;
   pending: number;
   processAlive: boolean;
-  onSend: (text: string, opts: RunOptions, attachments: string[]) => Promise<void>;
-  onInterrupt?: () => Promise<void>;
+  /** mode 只在进程忙时有意义：排到这一轮之后，还是插进这一轮 */
+  onSend: (text: string, opts: RunOptions, attachments: string[], mode: SendMode) => Promise<void>;
+  /** 打断这一轮；resolve 为被撤下来的排队消息（放回输入框） */
+  onInterrupt?: () => Promise<QueuedMessage[] | undefined>;
   onStop?: () => Promise<void>;
+  /** 排队等这一轮结束再发的消息 */
+  queue?: QueuedMessage[];
+  /** agent 能不能把消息插进正在进行的这一轮 */
+  canSteer?: boolean;
+  onUnqueue?: (id: string) => Promise<QueuedMessage>;
+  onSteerQueued?: (id: string) => Promise<void>;
   /** 当前进程用的模型；进程活着时下拉框直接切换它 */
   runModel?: string;
   onSetModel?: (model: string) => Promise<void>;
@@ -296,16 +357,18 @@ export default function Composer({
   const files = useAttachments();
   const drop = useDropZone(files.add);
   const working = state === 'starting' || state === 'running';
+  /** 进程正在跑一轮、agent 支持插话：默认发出去就是引导，另给一个「排队」 */
+  const steerable = state === 'running' && canSteer;
   const canSend = !busy && !files.uploading && (!!text.trim() || files.ids.length > 0);
 
-  const submit = async () => {
+  const submit = async (mode: SendMode = steerable ? 'steer' : 'queue') => {
     const value = text.trim();
     if (!canSend) return;
     setBusy(true);
     setError('');
     try {
       // 三项都显式带上：'default' / 空串表示"就用默认"，免得服务端拿会话上次的选项补
-      await onSend(value, explicit(opts), files.ids);
+      await onSend(value, explicit(opts), files.ids, mode);
       touched.current = false;
       setText('');
       files.clear();
@@ -317,7 +380,7 @@ export default function Composer({
     }
   };
 
-  const act = async (fn?: () => Promise<void>) => {
+  const act = async (fn?: () => Promise<unknown>) => {
     if (!fn) return;
     setError('');
     try {
@@ -327,9 +390,22 @@ export default function Composer({
     }
   };
 
+  /** 撤回的排队消息放回输入框：文字接在已经写了的前面，附件放回托盘 */
+  const restore = (items: QueuedMessage[]) => {
+    if (!items.length) return;
+    const texts = items.map((q) => q.text).filter(Boolean);
+    setText((cur) => [...texts, cur.trim()].filter(Boolean).join('\n\n'));
+    files.restore(items.flatMap((q) => q.attachments));
+    input.current?.focus();
+  };
+
   const placeholder = processAlive
     ? working
-      ? '继续输入会排在当前这一轮之后'
+      ? steerable
+        ? coarse
+          ? '补充指示，发送即插进这一轮'
+          : '补充指示 · Enter 插进这一轮 · Tab 排队'
+        : '继续输入会排在当前这一轮之后'
       : '继续对话'
     : `发送消息，会在同一会话上续接（${agent === 'codex' ? 'codex resume' : agent === 'dsh' ? 'DSH 会话恢复' : 'claude --resume'}）`;
 
@@ -345,8 +421,18 @@ export default function Composer({
         ) : null}
         {pending > 0 ? (
           <div className="composer__alert">
-            <Icon name="alert" size={14} />有 {pending} 个工具调用等待审批，见上方卡片
+            <Icon name="alert" size={14} />有 {pending} 个请求等你处理，见上方卡片
+            {steerable ? '；直接发消息会先拒绝它们，再把消息交给 agent' : ''}
           </div>
+        ) : null}
+        {queue.length ? (
+          <QueueList
+            items={queue}
+            canSteer={steerable}
+            onSteer={onSteerQueued ? (id) => void act(() => onSteerQueued(id)) : undefined}
+            onEdit={onUnqueue ? (id) => void act(async () => restore([await onUnqueue(id)])) : undefined}
+            onRemove={onUnqueue ? (id) => void act(() => onUnqueue(id)) : undefined}
+          />
         ) : null}
         <div
           className={`composer__card${working ? ' is-working' : ''}${drop.over ? ' is-dropping' : ''}`}
@@ -366,6 +452,10 @@ export default function Composer({
               if (isSubmitKey(e)) {
                 e.preventDefault();
                 void submit();
+              } else if (e.key === 'Tab' && !e.shiftKey && working && canSend) {
+                // 和 Codex 终端一样：一轮进行中按 Tab 排队
+                e.preventDefault();
+                void submit('queue');
               }
             }}
           />
@@ -415,17 +505,40 @@ export default function Composer({
               )}
             </span>
             {working && onInterrupt ? (
-              <button className="btn btn--sm composer__interrupt" onClick={() => void act(onInterrupt)} title="打断当前这一轮，进程保留">
+              <button
+                className="btn btn--sm composer__interrupt"
+                onClick={() =>
+                  void act(async () => {
+                    restore((await onInterrupt()) ?? []);
+                  })
+                }
+                title={queue.length ? '打断当前这一轮，进程保留；排队的消息放回输入框' : '打断当前这一轮，进程保留'}
+              >
                 <Icon name="stop" size={13} filled />
                 打断
+              </button>
+            ) : null}
+            {steerable && canSend ? (
+              <button className="btn btn--sm" onClick={() => void submit('queue')} title={coarse ? '等这一轮结束再发' : '等这一轮结束再发（Tab）'}>
+                排队
               </button>
             ) : null}
             <button
               className="sendbtn"
               disabled={!canSend}
               onClick={() => void submit()}
-              aria-label={busy ? '发送中' : '发送'}
-              title={files.uploading ? '附件还在上传' : coarse ? '发送' : '发送（Enter；Shift+Enter 换行）'}
+              aria-label={busy ? '发送中' : steerable ? '引导' : working ? '排队' : '发送'}
+              title={
+                files.uploading
+                  ? '附件还在上传'
+                  : steerable
+                    ? `引导：插进正在进行的这一轮，agent 做完当前这一步就会看到${coarse ? '' : '（Enter）'}`
+                    : working
+                      ? `排队：这一轮结束后发出${coarse ? '' : '（Enter）'}`
+                      : coarse
+                        ? '发送'
+                        : '发送（Enter；Shift+Enter 换行）'
+              }
             >
               <Icon name="send" size={17} />
             </button>

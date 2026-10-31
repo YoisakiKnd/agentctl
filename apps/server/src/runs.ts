@@ -6,9 +6,12 @@ import type {
   Attachment,
   LiveMessage,
   PermissionMode,
+  QuestionAnswers,
+  QueuedMessage,
   RunHandle,
   RunState,
 } from '@agentctl/core';
+import { oneLine } from '@agentctl/core';
 
 export interface RunInfo {
   id: string;
@@ -23,7 +26,30 @@ export interface RunInfo {
   effort?: string;
   permissionMode?: PermissionMode;
   pendingApprovals: number;
+  /** 排队等着发的消息数 */
+  queued: number;
   error?: string;
+}
+
+/** 发消息时进程正忙：queue 排到这一轮之后；steer 插进正在进行的这一轮 */
+export type SendMode = 'queue' | 'steer';
+
+interface Queued {
+  id: string;
+  text: string;
+  attachments: Attachment[];
+  at: string;
+}
+
+const UPLOAD_ID_RE = /[\\/]uploads[\\/]([0-9a-f-]{36})[\\/]/;
+
+function publicQueued(q: Queued): QueuedMessage {
+  return {
+    id: q.id,
+    text: q.text,
+    at: q.at,
+    attachments: q.attachments.map((a) => ({ name: a.name, mime: a.mime, bytes: a.bytes, uploadId: UPLOAD_ID_RE.exec(a.path)?.[1] })),
+  };
 }
 
 type Listener = (msg: LiveMessage) => void;
@@ -45,6 +71,11 @@ class Run {
   private readonly log: LiveMessage[] = [];
   private readonly listeners = new Set<Listener>();
   private readonly pending = new Set<string>();
+  /**
+   * 进程忙时发来的消息在这里排队，空闲了再一条条交给适配器。
+   * 排在 server 而不是适配器里：网页能看到、能撤回、能改成引导，刷新页面也还在。
+   */
+  private queue: Queued[] = [];
   readonly agent: AgentId;
   readonly cwd: string;
   readonly title: string;
@@ -77,6 +108,9 @@ class Run {
     }
     if (msg.type === 'state') {
       if (this.state === 'running' && msg.state === 'idle') this.onTurnEnd?.();
+      // 空闲了就发下一条排队的；放到微任务里，别在适配器的 setState 里重入
+      if (msg.state === 'idle' && this.queue.length) queueMicrotask(() => this.drain());
+      if (msg.state === 'exited' && this.queue.length) this.dropQueue();
       this.state = msg.state;
       if (msg.sessionId) this.sessionId = msg.sessionId;
       if (msg.error) this.error = msg.error;
@@ -91,6 +125,112 @@ class Run {
       if (this.log.length > LOG_LIMIT) this.log.splice(0, this.log.length - LOG_LIMIT);
     }
     for (const fn of this.listeners) fn(msg);
+  }
+
+  /** 适配器就位后调用一次：告诉网页能不能引导 */
+  attach(handle: RunHandle): void {
+    this.handle = handle;
+    this.publishQueue();
+  }
+
+  /** 发一条消息：空闲就直接开始新的一轮；忙的时候按 mode 排队或引导 */
+  send(text: string, attachments: Attachment[], mode: SendMode): void {
+    if (this.state === 'exited') throw new Error('agent 进程已退出');
+    if (this.state === 'idle' && !this.queue.length) {
+      this.handle.send(text, attachments);
+      return;
+    }
+    if (mode === 'steer' && this.canSteer()) {
+      this.steerNow(text, attachments);
+      return;
+    }
+    this.queue.push({ id: randomUUID(), text, attachments, at: new Date().toISOString() });
+    this.publishQueue();
+  }
+
+  /** 把排队中的一条改成引导：马上插进正在进行的这一轮（已经空闲就直接发） */
+  steerQueued(id: string): boolean {
+    const item = this.take(id);
+    if (!item) return false;
+    if (this.state === 'idle') this.handle.send(item.text, item.attachments);
+    else if (this.canSteer()) this.steerNow(item.text, item.attachments);
+    else {
+      this.queue.unshift(item);
+      this.publishQueue();
+      throw new Error(this.state === 'starting' ? '进程还在启动，稍后再引导' : '这个 agent 不支持在一轮进行中插入消息');
+    }
+    return true;
+  }
+
+  /** 撤回排队中的一条（网页把它放回输入框） */
+  unqueue(id: string): QueuedMessage | undefined {
+    const item = this.take(id);
+    return item && publicQueued(item);
+  }
+
+  /** 打断时清空队列：排队的消息交还给网页放回输入框，不再自动发出 */
+  takeQueue(): QueuedMessage[] {
+    const items = this.queue.map(publicQueued);
+    this.queue = [];
+    if (items.length) this.publishQueue();
+    return items;
+  }
+
+  private canSteer(): boolean {
+    return this.state === 'running' && !!this.handle.steer;
+  }
+
+  /**
+   * 引导时还有等审批 / 等回答的请求：先拒绝掉，agent 才会往下走、看到这条消息。
+   * 相当于终端里「不批准，告诉它该怎么做」。
+   */
+  private steerNow(text: string, attachments: Attachment[]): void {
+    for (const id of [...this.pending]) this.handle.respond(id, 'deny');
+    this.handle.steer!(text, attachments);
+  }
+
+  private take(id: string): Queued | undefined {
+    const i = this.queue.findIndex((q) => q.id === id);
+    if (i < 0) return undefined;
+    const [item] = this.queue.splice(i, 1);
+    this.publishQueue();
+    return item;
+  }
+
+  private drain(): void {
+    if (this.state !== 'idle') return;
+    const next = this.queue.shift();
+    if (!next) return;
+    this.publishQueue();
+    try {
+      this.handle.send(next.text, next.attachments);
+    } catch {
+      /* 进程刚好退出：exited 状态会随后到达 */
+    }
+  }
+
+  /** 进程意外退出时还有排队的：留一条提示，免得用户以为发出去了 */
+  private dropQueue(): void {
+    const texts = this.queue.map((q) => `「${oneLine(q.text || q.attachments.map((a) => a.name).join('、'), 60)}」`);
+    this.queue = [];
+    this.publishQueue();
+    this.push({
+      type: 'event',
+      event: {
+        agent: this.agent,
+        sessionId: this.sessionId,
+        turn: 0,
+        seq: 0,
+        ts: new Date().toISOString(),
+        uid: `queue-dropped:${randomUUID()}`,
+        transient: true,
+        item: { kind: 'notice', level: 'warn', code: 'queue_dropped', text: `进程已退出，${texts.length} 条排队的消息没有发出：${texts.join('')}` },
+      },
+    });
+  }
+
+  private publishQueue(): void {
+    this.push({ type: 'queue', items: this.queue.map(publicQueued), steer: !!this.handle?.steer });
   }
 
   subscribe(fn: Listener): () => void {
@@ -112,6 +252,7 @@ class Run {
       effort: this.effort,
       permissionMode: this.permissionMode,
       pendingApprovals: this.pending.size,
+      queued: this.queue.length,
       error: this.error,
     };
   }
@@ -154,7 +295,7 @@ export class RunManager {
     run.onTurnEnd = () => this.onTurnEnd(run.info());
     this.runs.set(run.id, run);
 
-    run.handle = opts.adapter.run(
+    const handle = opts.adapter.run(
       {
         cwd: opts.cwd,
         prompt: opts.prompt,
@@ -170,6 +311,7 @@ export class RunManager {
       },
       (msg) => run.push(msg),
     );
+    run.attach(handle);
 
     void run.handle.exited.then(() => {
       this.onExit(run.info());
@@ -199,7 +341,7 @@ export class RunManager {
     return [...this.runs.values()].map((r) => r.info());
   }
 
-  respond(id: string, requestId: string, decision: ApprovalDecision, answers?: Record<string, string>): boolean {
+  respond(id: string, requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers): boolean {
     return this.runs.get(id)?.handle.respond(requestId, decision, answers) ?? false;
   }
 

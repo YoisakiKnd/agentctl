@@ -24,6 +24,7 @@ import {
   type QuotaSnapshot,
   type QuotaWindow,
   type PermissionMode,
+  type QuestionAnswers,
   type RunHandle,
   type RunRequest,
   type RunSink,
@@ -118,8 +119,10 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
   const ctx: ParseCtx = { file: '', sessionId, turn: req.startTurn ?? 0 };
   const pending = new Map<string, Pending>();
   let seq = 0;
-  let inflight = 0; // 已发出、还没收到 result 的用户消息数
-  let awaitingEcho = 0; // 已发出、还没收到回显的用户消息数
+  // 已发出、还没收到回显的用户消息数。CLI 读到消息时回显它：一轮进行中写进去的消息
+  // 会在当前工具结束后并进这一轮（回显在 result 之前），否则下一轮再处理（回显在 result 之后）。
+  // 所以 result 到达时还有没回显的，说明 CLI 马上要开新的一轮。
+  let awaitingEcho = 0;
   let state: RunState = 'starting';
   let exited = false;
   let stderrTail = '';
@@ -234,7 +237,7 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
       case 'system': {
         const subtype = typeof line.subtype === 'string' ? line.subtype : '';
         if (subtype === 'init') {
-          if (state === 'starting') setState(inflight > 0 ? 'running' : 'idle');
+          if (state === 'starting') setState(awaitingEcho > 0 ? 'running' : 'idle');
           sink({
             type: 'config',
             model: typeof line.model === 'string' ? line.model : undefined,
@@ -247,7 +250,6 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
       }
 
       case 'result': {
-        inflight = Math.max(0, inflight - 1);
         const parts: string[] = [];
         if (typeof line.duration_ms === 'number') parts.push(`本轮耗时 ${(line.duration_ms / 1000).toFixed(1)}s`);
         if (typeof line.total_cost_usd === 'number') parts.push(`累计 $${line.total_cost_usd.toFixed(4)}`);
@@ -262,7 +264,7 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
         }
         interrupted = false;
         sink({ type: 'delta_reset' });
-        setState(inflight > 0 ? 'running' : 'idle');
+        setState(awaitingEcho > 0 ? 'running' : 'idle');
         return;
       }
 
@@ -357,19 +359,23 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
         parent_tool_use_id: null,
         session_id: sessionId,
       });
-      inflight += 1;
       awaitingEcho += 1;
       setState('running');
     },
-    respond(requestId: string, decision: ApprovalDecision, answers?: Record<string, string>) {
+    // CLI 自己会把一轮进行中写进来的消息并进当前这一轮，引导和发送是同一个动作
+    steer(text: string, attachments?: Attachment[]) {
+      handle.send(text, attachments);
+    },
+    respond(requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers) {
       const p = pending.get(requestId);
       if (!p) return false;
       if (decision === 'deny') {
         controlResponse(requestId, { behavior: 'deny', message: '用户在 agentctl 中拒绝了这次调用' });
       } else if (answers) {
-        // AskUserQuestion：答案随入参一起回给工具，它会把"问题=答案"交给模型
+        // AskUserQuestion：答案随入参一起回给工具，它会把"问题=答案"交给模型（多个答案用 ", " 连接）
         const input = p.input && typeof p.input === 'object' ? (p.input as Record<string, unknown>) : {};
-        controlResponse(requestId, { behavior: 'allow', updatedInput: { ...input, answers } });
+        const joined = Object.fromEntries(Object.entries(answers).map(([q, a]) => [q, a.join(', ')]));
+        controlResponse(requestId, { behavior: 'allow', updatedInput: { ...input, answers: joined } });
       } else {
         // "本会话内允许"：采纳 CLI 给的规则建议，但一律降级到 session 作用域，
         // 绝不替用户把规则写进项目或全局 settings 文件

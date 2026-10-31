@@ -122,19 +122,32 @@ export interface ParseCtx {
   turn: number;
 }
 
+/**
+ * 一轮进行中发来的消息（网页上的「引导」、终端里边跑边打字）：CLI 把它并进当前这一轮，
+ * 磁盘上记成一行 attachment（queued_command），而不是普通的 user 行。
+ * uuid 取它对应的那条用户消息（source_uuid），和实时流里的回显是同一个，两边才能去重。
+ */
+function queuedPrompt(line: Record<string, unknown>): { content: unknown; uuid?: string } | undefined {
+  const a = line.attachment as { type?: unknown; prompt?: unknown; source_uuid?: unknown; commandMode?: unknown } | undefined;
+  if (a?.type !== 'queued_command' || a.prompt === undefined) return undefined;
+  if (a.commandMode !== undefined && a.commandMode !== 'prompt') return undefined;
+  return { content: a.prompt, uuid: typeof a.source_uuid === 'string' ? a.source_uuid : undefined };
+}
+
 export function parseLine(
   line: Record<string, unknown>,
   offset: number,
   ctx: ParseCtx,
 ): UnifiedEvent[] {
   const type = typeof line.type === 'string' ? line.type : '';
-  if (NOISE.has(type) || type === 'ai-title' || type === 'cost-state') return [];
+  const queued = type === 'attachment' ? queuedPrompt(line) : undefined;
+  if (!queued && (NOISE.has(type) || type === 'ai-title' || type === 'cost-state')) return [];
 
   const ts = typeof line.timestamp === 'string' ? line.timestamp : new Date(0).toISOString();
   const turn = turnIndexOf(line) ?? ctx.turn;
   const out: UnifiedEvent[] = [];
   // 行 uuid 在磁盘与实时流里一致；同一行拆出的多个事件靠块序号区分
-  const base = typeof line.uuid === 'string' ? line.uuid : `@${offset}`;
+  const base = queued?.uuid ?? (typeof line.uuid === 'string' ? line.uuid : `@${offset}`);
   const push = (item: Item) => {
     out.push({
       agent: 'claude',
@@ -147,6 +160,12 @@ export function parseLine(
       raw: { file: ctx.file, offset, type },
     });
   };
+
+  if (queued) {
+    const { texts, media } = flattenContent(queued.content, offset);
+    if (texts.length || media.length) push({ kind: 'text', role: 'user', text: texts.join('\n\n'), media: media.length ? media : undefined });
+    return out;
+  }
 
   if (type === 'user') {
     const content = (line.message as { content?: unknown } | undefined)?.content;

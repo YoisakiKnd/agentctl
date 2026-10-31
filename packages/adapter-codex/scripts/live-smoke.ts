@@ -20,7 +20,7 @@ const handle = adapter.run!(
   { cwd, prompt: 'Run the shell command `echo codex > probe.txt`, then reply with just DONE.', model: process.env.MODEL ?? 'gpt-6-luna' },
   (msg: LiveMessage) => {
     if (msg.type === 'delta') return void (deltas += 1);
-    if (msg.type === 'delta_reset') return;
+    if (msg.type === 'delta_reset' || msg.type === 'queue') return;
     if (msg.type === 'config') return console.log(`[config] model=${msg.model ?? '-'} mode=${msg.permissionMode ?? '-'}`);
     if (msg.type === 'state') {
       console.log(`[state] ${msg.state}${msg.error ? ` err=${msg.error}` : ''}`);

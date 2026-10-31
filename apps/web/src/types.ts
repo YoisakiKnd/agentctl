@@ -140,15 +140,31 @@ export interface RunInfo {
   effort?: string;
   permissionMode?: PermissionMode;
   pendingApprovals: number;
+  queued?: number;
   error?: string;
 }
+
+/** 进程忙时发来、排队等这一轮结束再发的消息 */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: { name: string; mime: string; bytes: number; uploadId?: string }[];
+  at: string;
+}
+
+/** 发消息时进程正忙：queue 排到这一轮之后；steer 插进正在进行的这一轮 */
+export type SendMode = 'queue' | 'steer';
+
+/** 提问的回答：{ 问题原文: [选中的选项 / 自己写的答案] } */
+export type QuestionAnswers = Record<string, string[]>;
 
 export type LiveMessage =
   | { type: 'event'; event: UnifiedEvent }
   | { type: 'delta'; block: 'text' | 'thinking'; text: string }
   | { type: 'delta_reset' }
   | { type: 'state'; state: RunState; sessionId?: string; error?: string; exitCode?: number | null }
-  | { type: 'config'; model?: string; permissionMode?: PermissionMode; models?: ModelInfo[]; effort?: string };
+  | { type: 'config'; model?: string; permissionMode?: PermissionMode; models?: ModelInfo[]; effort?: string }
+  | { type: 'queue'; items: QueuedMessage[]; steer: boolean };
 
 export interface Me {
   authRequired: boolean;
