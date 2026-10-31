@@ -76,6 +76,8 @@ class Run {
    * 排在 server 而不是适配器里：网页能看到、能撤回、能改成引导，刷新页面也还在。
    */
   private queue: Queued[] = [];
+  /** 提问卡的回答，等适配器推「已回答」那条事件时一起记进去 */
+  private readonly answers = new Map<string, QuestionAnswers>();
   readonly agent: AgentId;
   readonly cwd: string;
   readonly title: string;
@@ -116,8 +118,16 @@ class Run {
       if (msg.error) this.error = msg.error;
     }
     if (msg.type === 'event' && msg.event.item.kind === 'approval') {
-      if (msg.event.item.state === 'pending') this.pending.add(msg.event.item.requestId);
-      else this.pending.delete(msg.event.item.requestId);
+      const item = msg.event.item;
+      if (item.state === 'pending') this.pending.add(item.requestId);
+      else {
+        this.pending.delete(item.requestId);
+        const answers = this.answers.get(item.requestId);
+        if (answers) {
+          this.answers.delete(item.requestId);
+          msg = { ...msg, event: { ...msg.event, item: { ...item, answers } } };
+        }
+      }
     }
     // 增量只对"此刻正在看"的人有意义，不进回放缓冲，否则刷新后会看到重复的半截文字
     if (msg.type !== 'delta' && msg.type !== 'delta_reset') {
@@ -125,6 +135,13 @@ class Run {
       if (this.log.length > LOG_LIMIT) this.log.splice(0, this.log.length - LOG_LIMIT);
     }
     for (const fn of this.listeners) fn(msg);
+  }
+
+  respond(requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers): boolean {
+    if (answers && decision !== 'deny') this.answers.set(requestId, answers);
+    const ok = this.handle.respond(requestId, decision, answers);
+    if (!ok) this.answers.delete(requestId);
+    return ok;
   }
 
   /** 适配器就位后调用一次：告诉网页能不能引导 */
@@ -342,7 +359,7 @@ export class RunManager {
   }
 
   respond(id: string, requestId: string, decision: ApprovalDecision, answers?: QuestionAnswers): boolean {
-    return this.runs.get(id)?.handle.respond(requestId, decision, answers) ?? false;
+    return this.runs.get(id)?.respond(requestId, decision, answers) ?? false;
   }
 
   stopAll(): void {

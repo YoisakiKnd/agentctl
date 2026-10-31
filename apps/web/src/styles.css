@@ -479,6 +479,13 @@ button.pill--tag:hover,
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
+}
+
+.pillrow__label {
+  margin-right: 2px;
+  font-size: 12px;
+  color: var(--text-3);
 }
 
 .segmented {
@@ -1951,6 +1958,44 @@ button.pill--tag:hover,
 
 .notice--error {
   color: var(--danger);
+}
+
+/* 规划模式的方案卡 */
+.plan {
+  margin: 6px 0;
+  padding: 12px 16px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--primary-bg);
+  border-radius: var(--r-lg);
+}
+
+.plan__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.plan__title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.plan__state {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.plan__actions {
+  margin-top: 10px;
+}
+
+.plan__hint {
+  font-size: 12px;
+  color: var(--text-3);
 }
 
 .approval {

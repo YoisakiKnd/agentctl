@@ -130,7 +130,8 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - 工具审批走与官方 Agent SDK 相同的 stdio control 协议。「本会话内都允许」只作用于当前进程，**不会**替你把规则写进任何 settings 文件。
 - 实时事件与磁盘回放同构，按行 `uuid` 去重：刷新页面、换设备打开都能接上同一个运行，不重不漏。
 - 权限模式：逐个审批 / 自动接受编辑 / Auto 模式 / 只做规划 / 跳过所有权限（需二次确认）；进程运行中可以直接切换。进程总是带 `--allow-dangerously-skip-permissions` 启动——它只是"允许之后切到 bypass"，默认行为不变；`allowBypassPermissions: false` 时不带。
-- `AskUserQuestion` 在网页里是一张问答表单（单选 / 多选 / 自填）。
+- `AskUserQuestion` 在网页里是一张问答表单（单选 / 多选 / 自填）；回答记在运行里，刷新页面后卡片上还能看到当时选了什么。
+- **规划模式交方案**（`ExitPlanMode`）：审批卡直接渲染方案，和终端一样三个选择——批准并自动接受编辑 / 批准、逐个审批 / 继续规划（要改哪里直接在输入框里说）。批准后 CLI 切换的权限模式会同步到网页的下拉框。
 - **运行中继续发消息**：
   - **引导**（默认，Enter）：插进正在进行的这一轮，agent 做完当前这一步就会看到。Claude 是 CLI 自己的行为（磁盘上记成 `queued_command`，回放照常显示）；Codex 走 `turn/steer`。这时还有没处理的审批 / 提问，会先拒绝掉再交出消息，相当于终端里「不批准，告诉它该怎么做」。
   - **排队**（Tab，或点「排队」）：等这一轮结束再依次发出。队列在 server 上，输入框上方列出来，每条可以改成引导、撤回到输入框里改、删掉；刷新页面、换设备都还在。
@@ -145,7 +146,7 @@ pnpm start                                    # 打开 http://100.x.y.z:8787
 - **轮次**：Codex 的行上没有轮号，只有每轮一条 `task_started`；按字节偏移建索引并增量更新，任意窗口都能定位轮次。
 - **实时**：一个会话一个 `codex app-server` 进程，`thread/start` / `thread/resume` + 每条消息一个 `turn/start`。实时 item 归一成文件格式后走同一个解析器，uid 与磁盘一致。
 - **权限模式**映射为 Codex 的审批策略 + 沙箱：逐个审批 = on-request + workspace-write，Auto = 同上但审批交给审核子代理，只读规划 = on-request + read-only + Plan 协作模式，跳过所有权限 = never + danger-full-access；运行中切换从下一轮生效。
-- **提问**：Codex 只在 Plan 协作模式下提供 `request_user_input`，所以「只读规划」会在 `turn/start` 里带上 `collaborationMode: plan`（实验接口，initialize 时声明 `experimentalApi`）。问题渲染成和 Claude 一样的问答卡，题目不让自填时不显示输入框，`isSecret` 的题输入时遮住；最终方案（`Plan` item）显示成一条「方案」消息。
+- **提问**：Codex 只在 Plan 协作模式下提供 `request_user_input`，所以「只读规划」会在 `turn/start` 里带上 `collaborationMode: plan`（实验接口，initialize 时声明 `experimentalApi`）。问题渲染成和 Claude 一样的问答卡，题目不让自填时不显示输入框，`isSecret` 的题输入时遮住；最终方案（`Plan` item）显示成一张方案卡，最新的那张下面有「执行这个方案」：切到逐个审批（协作模式回到 default），再发一句「按上面的方案开始实现」。
 - **额外权限**：Codex 申请沙箱外的权限（联网、读写工作区外的目录）也是一张审批卡；允许 = 本轮授予，本会话内都允许 = 整个会话授予。
 
 ## DSH 怎么接的

@@ -244,6 +244,10 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
             permissionMode: typeof line.permissionMode === 'string' ? (line.permissionMode as PermissionMode) : undefined,
           });
         }
+        // 权限模式在 CLI 里变了（批准方案后退出规划模式、setMode 规则生效）：网页的下拉框跟着变
+        if (subtype === 'status' && typeof line.permissionMode === 'string') {
+          sink({ type: 'config', permissionMode: line.permissionMode as PermissionMode });
+        }
         if (QUIET_SYSTEM.has(subtype)) return;
         for (const event of parseLine(line, seq++, ctx)) sink({ type: 'event', event });
         return;
@@ -378,13 +382,16 @@ export function startClaudeRun(req: RunRequest, sink: RunSink): RunHandle {
         controlResponse(requestId, { behavior: 'allow', updatedInput: { ...input, answers: joined } });
       } else {
         // "本会话内允许"：采纳 CLI 给的规则建议，但一律降级到 session 作用域，
-        // 绝不替用户把规则写进项目或全局 settings 文件
+        // 绝不替用户把规则写进项目或全局 settings 文件。
+        // 批准方案（ExitPlanMode）时它的意思是「批准，之后自动接受编辑」，和终端里的选项一致
         const updatedPermissions =
-          decision === 'allow_session'
-            ? p.suggestions
-                .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
-                .map((s) => ({ ...s, destination: 'session' }))
-            : undefined;
+          decision !== 'allow_session'
+            ? undefined
+            : p.toolName === 'ExitPlanMode'
+              ? [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]
+              : p.suggestions
+                  .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+                  .map((s) => ({ ...s, destination: 'session' }));
         controlResponse(requestId, { behavior: 'allow', updatedInput: p.input, updatedPermissions });
       }
       resolveApproval(requestId, decision !== 'deny');

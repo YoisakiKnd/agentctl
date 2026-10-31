@@ -78,11 +78,8 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
   useEffect(() => {
     api
       .sessions()
-      .then(({ sessions }) => {
-        setSessions(sessions);
-        // 没指定目录时默认最近活跃的项目
-        setCwd((cur) => cur || sessions.find((s) => s.cwd)?.cwd || '');
-      })
+      // 不替用户预选目录：新项目点「选择…」，要接着在某个项目里干活再点下面的最近项目
+      .then(({ sessions }) => setSessions(sessions))
       .catch(() => undefined);
     // 只列出命令行可用、并且接入了实时运行的 agent
     api
@@ -174,7 +171,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
                 list="recent-cwds"
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
-                placeholder="/home/you/project"
+                placeholder="点「选择…」浏览或新建，也可以直接输入路径"
                 spellCheck={false}
                 autoCapitalize="off"
               />
@@ -204,13 +201,16 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           </label>
 
           {recent.length > 0 ? (
-            <div className="pillrow">
+            <div className="pillrow" aria-label="最近的项目">
+              <span className="pillrow__label">最近的项目</span>
               {recent.slice(0, 10).map((c) => (
                 <button
                   type="button"
                   key={c}
                   className={`pill pill--btn${c === cwd ? ' is-on' : ''}`}
-                  onClick={() => setCwd(c)}
+                  aria-pressed={c === cwd}
+                  // 再点一次取消
+                  onClick={() => setCwd(c === cwd ? '' : c)}
                   title={homeShorten(c)}
                 >
                   <Icon name="folder" size={12} />

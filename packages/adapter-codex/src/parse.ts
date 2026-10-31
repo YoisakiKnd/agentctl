@@ -189,7 +189,7 @@ export function parseLine(line: Rec, offset: number, ctx: ParseCtx): UnifiedEven
       case 'Plan': {
         // Plan 协作模式的最终方案（模型输出里的 <proposed_plan>）；它不会再另有一条 AgentMessage
         const text = str(item.text)?.trim();
-        if (text) push({ kind: 'text', role: 'assistant', text: `**方案**\n\n${text}` }, id);
+        if (text) push({ kind: 'text', role: 'assistant', text, phase: 'plan' }, id);
         break;
       }
       case 'Reasoning': {

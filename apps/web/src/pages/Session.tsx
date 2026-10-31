@@ -358,6 +358,12 @@ export default function Session({ id, at }: { id: string; at?: number }) {
     [runId],
   );
 
+  /** 执行规划模式给出的方案：切到「逐个审批」，再让它按方案开始实现 */
+  const implementPlan = useCallback(async () => {
+    if (runId && processAlive) await api.setPermissionMode(runId, 'default');
+    await send('按上面的方案开始实现。', { permissionMode: 'default' }, [], 'queue');
+  }, [runId, processAlive, send]);
+
   // 没有我们的进程、文件却在最近一分钟被写过：多半是终端里正开着这个会话
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -465,7 +471,13 @@ export default function Session({ id, at }: { id: string; at?: number }) {
             ) : null}
             {error ? <div className="empty empty--error">{error}</div> : null}
             <div ref={rows}>
-              <Timeline events={events} onDecide={runId ? decide : undefined} draft={live.draft} highlight={at} />
+              <Timeline
+                events={events}
+                onDecide={runId ? decide : undefined}
+                onImplementPlan={canRun && runState !== 'running' && runState !== 'starting' ? implementPlan : undefined}
+                draft={live.draft}
+                highlight={at}
+              />
               {at !== undefined ? (
                 <div className="jumpbar">
                   <Icon name="search" size={14} />

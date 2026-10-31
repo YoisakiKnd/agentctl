@@ -31,7 +31,7 @@ type Rec = Record<string, unknown>;
 
 const IDLE_EXIT_MS = 30 * 60_000;
 const STDERR_KEEP = 4096;
-const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.11.0' };
+const CLIENT_INFO = { name: 'agentctl', title: 'agentctl', version: '0.12.0' };
 
 /**
  * 网页的权限模式 → Codex 自己的权限预设（与 TUI 里 /permissions 一致）：

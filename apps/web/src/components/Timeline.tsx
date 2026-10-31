@@ -120,8 +120,13 @@ function QuestionForm({
   onDecide?: DecideFn;
 }) {
   const questions = questionsOf(item.input);
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
-  const [other, setOther] = useState<Record<string, string>>({});
+  // 已经回答过（刷新页面后）：按记下的回答还原，选项归选项、其余算自己写的
+  const [picked, setPicked] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(questions.map((q) => [q.question, (item.answers?.[q.question] ?? []).filter((a) => q.options.some((o) => o.label === a))])),
+  );
+  const [other, setOther] = useState<Record<string, string>>(() =>
+    Object.fromEntries(questions.map((q) => [q.question, (item.answers?.[q.question] ?? []).filter((a) => !q.options.some((o) => o.label === a)).join(', ')])),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = item.state === 'pending';
@@ -217,6 +222,96 @@ function QuestionForm({
   );
 }
 
+/** ExitPlanMode 的入参里带着方案原文（Markdown） */
+function planOf(input: unknown): string {
+  const plan = (input as { plan?: unknown } | undefined)?.plan;
+  return typeof plan === 'string' ? plan.trim() : '';
+}
+
+/** 规划模式给出的方案：渲染成一张卡；actions 放批准 / 执行按钮 */
+function PlanCard({ plan, state, children }: { plan: string; state?: string; children?: React.ReactNode }) {
+  return (
+    <div className="plan">
+      <div className="plan__head">
+        <Icon name="file" size={14} />
+        <span className="plan__title">方案</span>
+        {state ? <span className="plan__state">{state}</span> : null}
+      </div>
+      <div className="msg plan__body">
+        <Markdown text={plan} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** Claude 在规划模式里交方案（ExitPlanMode）：和终端一样给三个选择 */
+function PlanApproval({ item, plan, onDecide }: { item: Extract<Item, { kind: 'approval' }>; plan: string; onDecide?: DecideFn }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = item.state === 'pending';
+  const decide = async (d: ApprovalDecision) => {
+    if (!onDecide) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onDecide(item.requestId, d);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '提交失败');
+      setBusy(false);
+    }
+  };
+  return (
+    <PlanCard plan={plan} state={pending ? '等你批准' : item.state === 'approved' ? '已批准' : '继续规划'}>
+      {pending && onDecide ? (
+        <div className="approval__actions plan__actions">
+          <button className="btn btn--sm btn--primary" disabled={busy} onClick={() => void decide('allow_session')} title="退出规划模式，之后的文件编辑自动接受">
+            批准，自动接受编辑
+          </button>
+          <button className="btn btn--sm" disabled={busy} onClick={() => void decide('allow')} title="退出规划模式，之后的编辑逐个审批">
+            批准，逐个审批
+          </button>
+          <button className="btn btn--sm" disabled={busy} onClick={() => void decide('deny')} title="留在规划模式；可以直接在下面的输入框里说要改哪里">
+            继续规划
+          </button>
+          {error ? <span className="approval__error">{error}</span> : null}
+        </div>
+      ) : null}
+    </PlanCard>
+  );
+}
+
+/** Codex 的方案（Plan item）：最新的那个下面给一个「执行这个方案」 */
+function PlanMessage({ text, onImplement }: { text: string; onImplement?: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <PlanCard plan={text}>
+      {onImplement ? (
+        <div className="approval__actions plan__actions">
+          <button
+            className="btn btn--sm btn--primary"
+            disabled={busy}
+            title="切到「逐个审批」并让它按这个方案开始实现"
+            onClick={() => {
+              setBusy(true);
+              setError('');
+              onImplement().catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : '操作失败');
+                setBusy(false);
+              });
+            }}
+          >
+            执行这个方案
+          </button>
+          <span className="plan__hint">要改的话直接在下面的输入框里说</span>
+          {error ? <span className="approval__error">{error}</span> : null}
+        </div>
+      ) : null}
+    </PlanCard>
+  );
+}
+
 const APPROVAL_STATE: Record<Extract<Item, { kind: 'approval' }>['state'], string> = {
   pending: '等待审批',
   approved: '已允许',
@@ -228,6 +323,8 @@ function Approval({ item, onDecide }: { item: Extract<Item, { kind: 'approval' }
   if (item.tool === 'AskUserQuestion' && questionsOf(item.input).length) {
     return <QuestionForm item={item} onDecide={onDecide} />;
   }
+  const plan = planOf(item.input);
+  if (item.tool === 'ExitPlanMode' && plan) return <PlanApproval item={item} plan={plan} onDecide={onDecide} />;
   return <ToolApproval item={item} onDecide={onDecide} />;
 }
 
@@ -316,7 +413,15 @@ function DiffBody({ patch }: { patch: string }) {
   );
 }
 
-function renderItem(item: Item, onDecide?: DecideFn) {
+interface RenderExtras {
+  /** 只给最新的那个方案 */
+  onImplementPlan?: () => Promise<void>;
+  /** 已经有审批卡在显示的方案：同一份方案的工具调用就不再重复摊开 */
+  approvalPlans?: Set<string>;
+}
+
+function renderItem(item: Item, onDecide?: DecideFn, extras: RenderExtras = {}) {
+  const { onImplementPlan, approvalPlans } = extras;
   switch (item.kind) {
     case 'text': {
       if (item.role === 'user') {
@@ -333,6 +438,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
           </div>
         );
       }
+      if (item.phase === 'plan') return <PlanMessage text={item.text} onImplement={onImplementPlan} />;
       return (
         <>
           <div className="msg">
@@ -357,6 +463,10 @@ function renderItem(item: Item, onDecide?: DecideFn) {
       );
 
     case 'tool_call':
+      // 回放里的 ExitPlanMode：方案本身比入参 JSON 有用
+      if (item.name === 'ExitPlanMode' && planOf(item.input)) {
+        return approvalPlans?.has(planOf(item.input)) ? null : <PlanCard plan={planOf(item.input)} />;
+      }
       return (
         <details className="fold fold--tool">
           <summary>
@@ -442,16 +552,28 @@ function DraftRow({ draft }: { draft: Draft }) {
 export default function Timeline({
   events,
   onDecide,
+  onImplementPlan,
   draft,
   highlight,
 }: {
   events: UnifiedEvent[];
   onDecide?: DecideFn;
+  /** 执行最新的方案（Codex Plan 模式）；不给就不显示按钮 */
+  onImplementPlan?: () => Promise<void>;
   draft?: Draft | null;
   /** 搜索跳转：这一行（偏移）上的事件高亮 */
   highlight?: number;
 }) {
   const usage = collectUsage(events);
+  // 只有最新的方案、而且之后用户还没说过话，才给「执行这个方案」
+  let latestPlan: UnifiedEvent | undefined;
+  const approvalPlans = new Set<string>();
+  for (const ev of events) {
+    if (ev.item.kind === 'approval' && ev.item.tool === 'ExitPlanMode' && planOf(ev.item.input)) approvalPlans.add(planOf(ev.item.input));
+    if (ev.item.kind !== 'text') continue;
+    if (ev.item.phase === 'plan') latestPlan = ev;
+    else if (ev.item.role === 'user') latestPlan = undefined;
+  }
   const newestTurn = events.length > 0 ? events[events.length - 1].turn : -1;
   let lastTurn = -1;
   let lastClock = '';
@@ -483,7 +605,7 @@ export default function Timeline({
               data-seq={ev.seq}
             >
               <div className="ev__gutter num">{showClock ? clock : ''}</div>
-              <div className="ev__body">{renderItem(ev.item, onDecide)}</div>
+              <div className="ev__body">{renderItem(ev.item, onDecide, { onImplementPlan: ev === latestPlan ? onImplementPlan : undefined, approvalPlans })}</div>
             </div>
           </Fragment>
         );

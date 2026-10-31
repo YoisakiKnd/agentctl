@@ -15,7 +15,7 @@ export interface TruncInfo {
 }
 
 export type Item =
-  | { kind: 'text'; role: 'user' | 'assistant'; text: string; media?: MediaRef[] }
+  | { kind: 'text'; role: 'user' | 'assistant'; text: string; media?: MediaRef[]; phase?: 'plan' }
   | { kind: 'thinking'; text: string; durationMs?: number }
   | { kind: 'tool_call'; callId: string; name: string; input: unknown; summary?: string }
   | { kind: 'tool_result'; callId: string; ok: boolean; output: string; truncated?: TruncInfo }
@@ -36,6 +36,8 @@ export type Item =
       choices: string[];
       state: 'pending' | 'approved' | 'denied';
       input?: unknown;
+      /** 提问卡回答了什么 */
+      answers?: QuestionAnswers;
     }
   | { kind: 'notice'; level: 'info' | 'warn' | 'error'; code?: string; text: string };
 

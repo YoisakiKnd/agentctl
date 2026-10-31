@@ -1,4 +1,4 @@
-import type { PermissionMode } from './adapter.ts';
+import type { PermissionMode, QuestionAnswers } from './adapter.ts';
 
 /**
  * 统一事件模型 —— 整个系统的核心契约。
@@ -24,7 +24,8 @@ export interface TruncInfo {
 }
 
 export type Item =
-  | { kind: 'text'; role: 'user' | 'assistant'; text: string; media?: MediaRef[] }
+  /** phase: 'plan'：规划模式给出的方案（Codex 的 Plan item），网页上带「执行这个方案」 */
+  | { kind: 'text'; role: 'user' | 'assistant'; text: string; media?: MediaRef[]; phase?: 'plan' }
   | { kind: 'thinking'; text: string; durationMs?: number }
   | { kind: 'tool_call'; callId: string; name: string; input: unknown; summary?: string }
   | { kind: 'tool_result'; callId: string; ok: boolean; output: string; truncated?: TruncInfo }
@@ -47,6 +48,8 @@ export type Item =
       state: 'pending' | 'approved' | 'denied';
       /** 工具入参原文，审批前要能看清它到底要干什么 */
       input?: unknown;
+      /** 提问卡回答了什么（server 记下来，刷新页面后还能看到） */
+      answers?: QuestionAnswers;
     }
   | { kind: 'notice'; level: 'info' | 'warn' | 'error'; code?: string; text: string };
 
