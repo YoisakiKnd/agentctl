@@ -11,7 +11,7 @@ import {
   verifySession,
   type LoginThrottle,
 } from './auth.ts';
-import { expandHome, isPathAllowed, type Config } from './config.ts';
+import { HOME, expandHome, isPathAllowed, type Config } from './config.ts';
 import type { Registry } from './registry.ts';
 import type { RunPrefs } from './db.ts';
 import type { RunInfo, RunManager, SendMode } from './runs.ts';
@@ -20,6 +20,7 @@ import { usageReport } from './usage.ts';
 import type { QuotaService } from './quota.ts';
 import { CHANNEL_FIELDS, EVENTS, maskConfig, type NotifyService } from './notify.ts';
 import { MAX_UPLOAD_BYTES, UPLOADS_DIR, findUpload, resolveAttachments, saveUpload } from './uploads.ts';
+import { CloneJobs, defaultRoot, gitInit, listDir, makeChild } from './workspaces.ts';
 
 export interface Ctx {
   cfg: Config;
@@ -796,6 +797,51 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
 
   // 新建会话页输入目录时实时检查：存在？不存在的话能不能新建
   app.get('/api/fs/check', async (req) => inspectDir(cfg, (req.query as { path?: string }).path));
+
+  // ── 工作区：浏览目录、新建项目、克隆仓库 ──
+  const clones = new CloneJobs();
+  const workspaceRoot = () => registry.workspaceRoot() ?? defaultRoot(cfg);
+
+  app.get('/api/workspaces', async () => ({ root: workspaceRoot(), home: HOME }));
+
+  app.post('/api/workspaces/root', async (req) => {
+    const { path } = (req.body ?? {}) as { path?: unknown };
+    if (typeof path !== 'string') throw new BadRequest('缺少 path');
+    const dir = await listDir(cfg, path, false);
+    registry.setWorkspaceRoot(dir.path);
+    return { root: dir.path };
+  });
+
+  app.get('/api/fs/list', async (req) => {
+    const q = req.query as { path?: string; hidden?: string };
+    return listDir(cfg, q.path?.trim() || workspaceRoot(), q.hidden === '1');
+  });
+
+  /** 在某个目录下新建子文件夹（目录浏览器里的「新建文件夹」） */
+  app.post('/api/fs/mkdir', async (req) => {
+    const { parent, name } = (req.body ?? {}) as { parent?: unknown; name?: unknown };
+    if (typeof parent !== 'string') throw new BadRequest('缺少 parent');
+    return { path: await makeChild(cfg, parent, name) };
+  });
+
+  /** 按名字在工作区根目录下新建项目，可选 git init */
+  app.post('/api/workspaces', async (req) => {
+    const { name, git } = (req.body ?? {}) as { name?: unknown; git?: unknown };
+    const path = await makeChild(cfg, workspaceRoot(), name);
+    if (git === true) await gitInit(path);
+    return { path };
+  });
+
+  app.post('/api/workspaces/clone', async (req) => {
+    const { url, name } = (req.body ?? {}) as { url?: unknown; name?: unknown };
+    return { job: await clones.start(cfg, workspaceRoot(), url, name) };
+  });
+
+  app.get('/api/workspaces/clone/:id', async (req, reply) => {
+    const job = clones.get((req.params as { id: string }).id);
+    if (!job) return reply.code(404).send({ error: '克隆任务不存在或已过期' });
+    return { job };
+  });
 
   // 下拉框一改就记下（不必等发消息）：浏览器重启、换设备后仍是上次的选择
   app.post('/api/sessions/:id/prefs', async (req, reply) => {

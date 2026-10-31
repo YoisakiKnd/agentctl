@@ -21,7 +21,7 @@ import { NotifyService } from './notify.ts';
 import { RunManager } from './runs.ts';
 import { ShellManager } from './shells.ts';
 
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 
 interface ServeOptions {
   host?: string;

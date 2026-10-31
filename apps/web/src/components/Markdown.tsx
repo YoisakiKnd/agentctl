@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import CodeBlock from './CodeBlock';
 
 /**
  * 极简 Markdown：只覆盖 agent 回复里真正会出现的语法（标题、围栏代码、
@@ -214,9 +215,7 @@ export default function Markdown({ text }: { text: string }) {
           }
           case 'code':
             return (
-              <pre className="code" key={key} data-lang={b.lang || undefined}>
-                {b.text}
-              </pre>
+              <CodeBlock key={key} text={b.text} lang={b.lang} />
             );
           case 'list': {
             const Tag = b.ordered ? 'ol' : 'ul';

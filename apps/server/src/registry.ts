@@ -181,6 +181,15 @@ export class Registry {
     }
   }
 
+  /** 网页上选的工作区根目录（新建项目、克隆仓库放在这下面）；没选过返回 undefined */
+  workspaceRoot(): string | undefined {
+    return this.db.getKv('workspace:root') || undefined;
+  }
+
+  setWorkspaceRoot(path: string): void {
+    this.db.setKv('workspace:root', path);
+  }
+
   annotation(id: string): Annotation {
     return this.notes.get(id) ?? { pinned: false, tags: [] };
   }

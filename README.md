@@ -8,6 +8,8 @@
 ## 现在能做什么
 
 - **在网页里跑 Claude Code、Codex、DeepSeek Harness**：新建会话或在任意历史会话上继续对话；流式输出、工具调用审批（允许 / 本会话内都允许 / 拒绝）、回答 agent 的提问、运行中排队或引导、打断、结束进程。会话照常写进 `~/.claude/projects`，终端里 `claude --resume` 接得上。
+- **选工作目录**：新建会话时点「选择…」，可以浏览服务器上的文件夹（能新建子文件夹），在工作区目录下按名字新建项目（可选 `git init`），或者填仓库地址克隆下来再开会话。工作区目录默认是 `~/Codes` 这类常见目录，在选择器里可以改。克隆用服务器上的 git 和凭据，不会弹出输入密码。
+- **代码块一键复制**：回复里的代码、工具入参和输出、审批里的命令，右上角都有复制按钮。
 - **粘贴图片、附文件**：截图直接 Ctrl+V，文件可以拖进输入框或点回形针选。Claude、Codex 收到的是原生图片（模型直接看图）；其他文件、以及不支持图片的 DSH，在消息末尾附上本地路径，agent 用读文件的工具自己去读。时间线里显示缩略图和文件名。
 - **自动刷新**：会话页每 2 秒增量追文件尾（只读新增的字节），终端里正在跑的会话也会实时出现；读者往上翻时不打扰，底部亮「有新内容」。看板和侧栏 15 秒刷新一次。
 - **模型列表来自 CLI**：和终端里 `/model` 看到的一致（别名 + 指定版本 + 推理强度）；进程运行中也能直接切换模型。
@@ -206,6 +208,10 @@ docs/PLAN.md               技术方案（勘察数据、架构、里程碑、�
 | GET | `/api/uploads/:id/:name` | 取回附件。只有认得的位图（png / jpeg / gif / webp）内联显示，其余一律下载 |
 | POST | `/api/runs` | 新建会话 `{cwd, prompt, attachments?, model?, permissionMode?, createDir?}`，等 agent 分配 id 后返回；目录不存在时返回 409，带 `createDir: true` 重发才新建 |
 | GET | `/api/fs/check?path=` | 检查工作目录：存在？不存在的话能不能新建 |
+| GET | `/api/fs/list?path=&hidden=1` | 列出子目录（标出哪些是 git 仓库）；不带 path 时列工作区目录 |
+| POST | `/api/fs/mkdir` | 在 `{parent}` 下新建文件夹 `{name}` |
+| GET · POST | `/api/workspaces` · `/api/workspaces/root` | 工作区目录；`POST /api/workspaces {name, git?}` 在它下面新建项目；`/root {path}` 改工作区目录 |
+| POST · GET | `/api/workspaces/clone` · `/clone/:id` | 后台克隆 `{url, name?}`（https / ssh / `git@host:path`）到工作区目录下，再轮询进度 |
 | POST | `/api/sessions/:id/prefs` | 存这个会话的运行选项（下拉框一改就存） |
 | GET · POST | `/api/run-defaults[/:agent]` | 每个 agent 上次用的运行选项（新建会话页的默认值） |
 | GET | `/api/runs` | 运行中的进程 |

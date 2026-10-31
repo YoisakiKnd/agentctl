@@ -8,6 +8,7 @@ import { AgentBadge } from '../components/AgentBadge';
 import Icon from '../components/Icon';
 import { AttachButton, AttachmentTray, onPasteFiles, useAttachments, useDropZone } from '../components/Attachments';
 import AppShell from '../components/Layout';
+import WorkspacePicker from '../components/WorkspacePicker';
 
 interface DirInfo {
   path: string;
@@ -41,6 +42,7 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
   const [dir, setDir] = useState<DirInfo | null>(null);
   /** 目录不存在、等用户确认「在这里新建」 */
   const [confirmCreate, setConfirmCreate] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     api
@@ -166,15 +168,21 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
 
           <label className="field">
             <span className="field__label">工作目录 <span className="field__hint">agent 会在这里读写文件、执行命令</span></span>
-            <input
-              className="input mono"
-              list="recent-cwds"
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-              placeholder="/home/you/project"
-              spellCheck={false}
-              autoCapitalize="off"
-            />
+            <span className="cwdrow">
+              <input
+                className="input mono"
+                list="recent-cwds"
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+                placeholder="/home/you/project"
+                spellCheck={false}
+                autoCapitalize="off"
+              />
+              <button type="button" className="btn" onClick={() => setPicking(true)} title="浏览文件夹、新建项目或克隆仓库">
+                <Icon name="folder" size={14} />
+                选择…
+              </button>
+            </span>
             <datalist id="recent-cwds">
               {recent.map((c) => (
                 <option key={c} value={c} />
@@ -264,6 +272,16 @@ export default function NewSession({ cwd: initialCwd, agent: initialAgent }: { c
           ) : null}
           {error ? <div className="form__error">{error}</div> : null}
         </form>
+        {picking ? (
+          <WorkspacePicker
+            initialPath={dir?.exists ? dir.path : undefined}
+            onClose={() => setPicking(false)}
+            onPick={(path) => {
+              setCwd(path);
+              setPicking(false);
+            }}
+          />
+        ) : null}
         <p className="form__note">
           会话照常写进 <span className="mono">{agent === 'codex' ? '~/.codex/sessions' : agent === 'dsh' ? '~/.dsh/sessions' : '~/.claude/projects'}</span>
           ，之后在终端里

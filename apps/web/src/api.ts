@@ -21,6 +21,23 @@ import type {
   NotifyItem,
 } from './types';
 
+export interface DirListing {
+  path: string;
+  parent?: string;
+  git: boolean;
+  entries: { name: string; path: string; git: boolean }[];
+  truncated: boolean;
+}
+
+export interface CloneJob {
+  id: string;
+  url: string;
+  path: string;
+  state: 'running' | 'done' | 'error';
+  progress: string;
+  error?: string;
+}
+
 /** 上传好的附件（服务端存成了本地文件） */
 export interface UploadInfo {
   id: string;
@@ -159,6 +176,18 @@ export const api = {
     request<{ ok: boolean }>(`/api/run-defaults/${agent}`, { method: 'POST', body: JSON.stringify(opts) }),
   checkDir: (path: string, signal?: AbortSignal) =>
     request<{ path: string; exists: boolean; creatable: boolean; error?: string }>(`/api/fs/check?${new URLSearchParams({ path })}`, { signal }),
+  workspaces: () => request<{ root: string; home: string }>('/api/workspaces'),
+  setWorkspaceRoot: (path: string) =>
+    request<{ root: string }>('/api/workspaces/root', { method: 'POST', body: JSON.stringify({ path }) }),
+  listDir: (path: string, hidden = false, signal?: AbortSignal) =>
+    request<DirListing>(`/api/fs/list?${new URLSearchParams({ path, ...(hidden ? { hidden: '1' } : {}) })}`, { signal }),
+  mkdir: (parent: string, name: string) =>
+    request<{ path: string }>('/api/fs/mkdir', { method: 'POST', body: JSON.stringify({ parent, name }) }),
+  createWorkspace: (name: string, git: boolean) =>
+    request<{ path: string }>('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, git }) }),
+  cloneRepo: (url: string, name?: string) =>
+    request<{ job: CloneJob }>('/api/workspaces/clone', { method: 'POST', body: JSON.stringify({ url, name: name || undefined }) }),
+  cloneJob: (id: string) => request<{ job: CloneJob }>(`/api/workspaces/clone/${id}`),
   startRun: (body: { agent?: AgentId; cwd: string; prompt: string; createDir?: boolean; attachments?: string[] } & RunOptions) =>
     request<{ run: RunInfo }>('/api/runs', { method: 'POST', body: JSON.stringify(body) }),
   send: (sessionId: string, text: string, opts: RunOptions = {}, attachments: string[] = [], mode: SendMode = 'queue') =>

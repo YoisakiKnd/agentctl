@@ -5,6 +5,7 @@ import { clockTime, formatTokens } from '../format';
 import Markdown from './Markdown';
 import Icon, { type IconName } from './Icon';
 import { SentAttachments, splitAttachments } from './Attachments';
+import CodeBlock from './CodeBlock';
 
 function firstLine(text: string, max = 140): string {
   const line = text.split('\n').find((l) => l.trim()) ?? '';
@@ -262,12 +263,12 @@ function ToolApproval({ item, onDecide }: { item: Extract<Item, { kind: 'approva
         <span className="approval__state">{APPROVAL_STATE[item.state]}</span>
       </div>
       {item.detail && item.detail !== headline ? <div className="approval__detail">{item.detail}</div> : null}
-      {headline ? <pre className="code approval__cmd">{headline}</pre> : null}
+      {headline ? <CodeBlock className="approval__cmd" text={headline} /> : null}
       <details className="fold">
         <summary>
           <span className="fold__preview">完整入参</span>
         </summary>
-        <pre className="code">{JSON.stringify(item.input ?? {}, null, 2)}</pre>
+        <CodeBlock text={JSON.stringify(item.input ?? {}, null, 2)} />
       </details>
       {pending && onDecide ? (
         <div className="approval__actions">
@@ -363,7 +364,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
             <span className="tool__name">{item.name}</span>
             <span className="fold__preview mono">{item.summary ?? ''}</span>
           </summary>
-          <pre className="code">{JSON.stringify(item.input, null, 2)}</pre>
+          <CodeBlock text={JSON.stringify(item.input, null, 2)} />
         </details>
       );
 
@@ -375,7 +376,7 @@ function renderItem(item: Item, onDecide?: DecideFn) {
             <span className="fold__preview mono">{firstLine(item.output) || '（无输出）'}</span>
             {item.truncated ? <span className="fold__meta">已截断</span> : null}
           </summary>
-          <pre className="code">{item.output}</pre>
+          <CodeBlock text={item.output} />
         </details>
       );
 

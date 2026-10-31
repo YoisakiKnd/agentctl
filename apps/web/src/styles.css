@@ -2575,6 +2575,58 @@ button.pill--tag:hover,
   color: var(--text);
 }
 
+/* 代码块 + 复制按钮：外层负责间距，按钮钉在右上角 */
+.codebox:has(> .approval__cmd) {
+  margin: 0 0 6px;
+}
+
+.codebox {
+  position: relative;
+  margin: 6px 0 12px;
+}
+
+.codebox > .code {
+  margin: 0;
+}
+
+.codebox__copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  min-width: 26px;
+  justify-content: center;
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.codebox:hover .codebox__copy,
+.codebox__copy:focus-visible,
+.codebox__copy.is-shown {
+  opacity: 1;
+}
+
+.codebox__copy:hover {
+  color: var(--text);
+  border-color: var(--border-2);
+}
+
+@media (hover: none) {
+  .codebox__copy {
+    opacity: 0.85;
+  }
+}
+
 .md-table {
   overflow-x: auto;
   margin: 10px 0 14px;
@@ -4133,4 +4185,240 @@ mark {
 .confirmbar__actions {
   display: flex;
   gap: 8px;
+}
+
+/* ── 新建会话：工作目录行 + 工作区选择器 ───────────────────── */
+
+.cwdrow {
+  display: flex;
+  gap: 8px;
+}
+
+.cwdrow > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cwdrow > .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, #000 40%, transparent);
+}
+
+.modal__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(640px, 100%);
+  max-height: min(720px, calc(100dvh - 32px));
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding-top: 4px;
+}
+
+.modal__spacer {
+  flex: 1;
+}
+
+.modal__foot .linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.wpick__path {
+  display: flex;
+  gap: 8px;
+}
+
+.wpick__path > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.wpick__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.wpick__crumbs .linkbtn {
+  padding: 0 2px;
+}
+
+.wpick__sep {
+  color: var(--text-3);
+}
+
+.wpick__list {
+  flex: 1;
+  min-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px;
+  transition: opacity 0.12s;
+}
+
+.wpick__list.is-loading {
+  opacity: 0.55;
+}
+
+.wpick__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wpick__item:hover {
+  background: var(--hover);
+}
+
+.wpick__item > .icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.wpick__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wpick__empty {
+  padding: 18px 10px;
+  font-size: 13px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.wpick__new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wpick__new > .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.wpick__hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.wpick__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.wpick__root {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.wpick__rootpath {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.wpick__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.wpick__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.wpick__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wpick__progress .atray__spin {
+  position: static;
+  flex: none;
+}
+
+.wpick__err {
+  white-space: pre-wrap;
+}
+
+@media (max-width: 600px) {
+  .modal {
+    padding: 0;
+    place-items: end stretch;
+  }
+
+  .modal__panel {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+  }
 }
